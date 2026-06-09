@@ -5,6 +5,7 @@ import {
   buildEditPredictionPrompt,
   parseEditPredictionResponse,
   getEditPredictionStopTokens,
+  splitIntoBlocks,
   ParsedEditRegion,
 } from './promptBuilder';
 import { ZetaConfig } from './config';
@@ -350,41 +351,7 @@ export class EditPredictionManager {
   }
 }
 
-// --- Shared helpers (mirrors promptBuilder.ts for V0318 block mapping) ---
-
-function splitIntoBlocks(text: string, minLines: number, maxLines: number): number[] {
-  if (!text) return [0, 0];
-  const lines = text.split('\n');
-  const offsets: number[] = [0];
-  let lastBoundary = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const gap = i - lastBoundary;
-    if (gap >= minLines && i > 0 && lines[i - 1].trim() === '') {
-      offsets.push(countBytes(lines.slice(0, i)));
-      lastBoundary = i;
-      continue;
-    }
-    if (gap >= maxLines) {
-      offsets.push(countBytes(lines.slice(0, i)));
-      lastBoundary = i;
-    }
-  }
-
-  const end = countBytes(lines);
-  if (offsets[offsets.length - 1] !== end) {
-    offsets.push(end);
-  }
-  return offsets;
-}
-
-function countBytes(lines: string[]): number {
-  let len = 0;
-  for (let i = 0; i < lines.length; i++) {
-    len += lines[i].length + 1;
-  }
-  return len === 0 ? 0 : len - 1;
-}
+// --- Helpers for mapping V0318 block offsets to document line ranges ---
 
 function getTextRange(document: vscode.TextDocument, startLine: number, endLine: number): string {
   const start = document.offsetAt(new vscode.Position(Math.max(0, startLine), 0));

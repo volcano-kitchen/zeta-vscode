@@ -66,6 +66,10 @@
       {
         "command": "zeta.testServer",
         "title": "Zeta: Test Server Connection"
+      },
+      {
+        "command": "zeta.forcePredict",
+        "title": "Zeta: Force Trigger Prediction"
       }
     ],
     "configuration": {
@@ -182,6 +186,11 @@
       "command": "zeta.dismissPrediction",
       "key": "escape",
       "when": "zeta.hasActivePrediction && !suggestWidgetVisible"
+    },
+    {
+      "command": "zeta.forcePredict",
+      "key": "ctrl+enter",
+      "when": "editorTextFocus"
     }
   ],
   "scripts": {

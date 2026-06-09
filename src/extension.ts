@@ -217,6 +217,12 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('zeta.forcePredict', () => {
+      vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+    })
+  );
+
   const toggle = vscode.commands.registerCommand('zeta.toggleEnabled', () => {
     const cfg = vscode.workspace.getConfiguration('zeta');
     const current = cfg.get<boolean>('enabled', true);

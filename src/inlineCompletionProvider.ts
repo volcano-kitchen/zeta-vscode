@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { InferenceClient } from './inferenceClient';
-import { buildFimPrompt, getFimStopTokens, sanitizeCompletion, FimRequest } from './promptBuilder';
+import { buildFimPrompt, getFimStopTokens, sanitizeCompletion, FimRequest, buildEditPredictionPrompt, parseEditPredictionResponse, getEditPredictionStopTokens } from './promptBuilder';
 import { getLspContext } from './lspContext';
 import { ZetaConfig, loadConfig } from './config';
 import { EditPredictionManager } from './editPredictionManager';
@@ -15,6 +15,9 @@ export class ZetaInlineCompletionProvider
   private pendingRequest: AbortController | null = null;
   private editPredictionManager: EditPredictionManager | null = null;
   private editHistory: EditHistoryTracker | null = null;
+
+  private resolvePendingEditPrediction: ((value: vscode.InlineCompletionItem[] | undefined) => void) | null = null;
+  private resolvePendingFim: ((value: vscode.InlineCompletionItem[] | undefined) => void) | null = null;
 
   private _onDidGetSuggestion = new vscode.EventEmitter<void>();
   readonly onDidGetSuggestion: vscode.Event<void> = this._onDidGetSuggestion.event;
@@ -63,7 +66,8 @@ export class ZetaInlineCompletionProvider
     if (!this.config.enabled) return undefined;
 
     if (this.config.enableEditPrediction && this.editHistory) {
-      const editResult = await this.handleEditPrediction(document, position, token);
+      const immediate = context.triggerKind === vscode.InlineCompletionTriggerKind.Invoke;
+      const editResult = await this.handleEditPrediction(document, position, token, immediate);
       if (editResult) return editResult;
     }
 
@@ -77,42 +81,61 @@ export class ZetaInlineCompletionProvider
   private async handleEditPrediction(
     document: vscode.TextDocument,
     position: vscode.Position,
-    token: vscode.CancellationToken
+    token: vscode.CancellationToken,
+    immediate: boolean = false
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
-    return new Promise(resolve => {
-      if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    if (this.resolvePendingEditPrediction) {
+      this.resolvePendingEditPrediction(undefined);
+      this.resolvePendingEditPrediction = null;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+
+    const run = async (resolve: (value: vscode.InlineCompletionItem[] | undefined) => void) => {
+      if (token.isCancellationRequested) {
+        resolve(undefined);
+        return;
+      }
 
       const offset = document.offsetAt(position);
       const prefix = document.getText().slice(0, offset);
       const suffix = document.getText().slice(offset);
-
       if (!prefix.trim() && !suffix.trim()) {
         resolve(undefined);
         return;
       }
 
-      this.debounceTimer = setTimeout(async () => {
-        if (token.isCancellationRequested) {
-          resolve(undefined);
-          return;
-        }
+      const manager = this.ensureEditPredictionManager();
+      const suggestion = await manager.getSuggestion(document, position, token);
 
-        const manager = this.ensureEditPredictionManager();
-        const suggestion = await manager.getSuggestion(document, position, token);
+      if (!suggestion || suggestion.regions.length === 0) {
+        resolve(undefined);
+        return;
+      }
 
-        if (!suggestion || suggestion.regions.length === 0) {
-          resolve(undefined);
-          return;
-        }
+      const primaryRegion = suggestion.regions[0];
+      const item = new vscode.InlineCompletionItem(
+        primaryRegion.replacement,
+        primaryRegion.range
+      );
 
-        const primaryRegion = suggestion.regions[0];
-        const item = new vscode.InlineCompletionItem(
-          primaryRegion.replacement,
-          primaryRegion.range
-        );
+      this._onDidGetSuggestion.fire();
+      resolve([item]);
+    };
 
-        this._onDidGetSuggestion.fire();
-        resolve([item]);
+    if (immediate) {
+      return new Promise(resolve => { run(resolve); });
+    }
+
+    return new Promise(resolve => {
+      this.resolvePendingEditPrediction = resolve;
+      this.debounceTimer = setTimeout(() => {
+        this.debounceTimer = null;
+        const r = this.resolvePendingEditPrediction;
+        this.resolvePendingEditPrediction = null;
+        run(r!);
       }, this.config.debounceMs);
     });
   }
@@ -122,26 +145,39 @@ export class ZetaInlineCompletionProvider
     position: vscode.Position,
     token: vscode.CancellationToken
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
+    if (this.resolvePendingFim) {
+      this.resolvePendingFim(undefined);
+      this.resolvePendingFim = null;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+
+    // snapshot prefix/suffix at call time, before debounce
+    const offset = document.offsetAt(position);
+    const prefix = document.getText().slice(0, offset);
+    const suffix = document.getText().slice(offset);
+
+    if (!prefix.trim() && !suffix.trim()) {
+      return undefined;
+    }
+
     return new Promise(resolve => {
-      if (this.debounceTimer) clearTimeout(this.debounceTimer);
-
-      const offset = document.offsetAt(position);
-      const prefix = document.getText().slice(0, offset);
-      const suffix = document.getText().slice(offset);
-
-      if (!prefix.trim() && !suffix.trim()) {
-        resolve(undefined);
-        return;
-      }
+      this.resolvePendingFim = resolve;
 
       this.debounceTimer = setTimeout(async () => {
+        this.debounceTimer = null;
+        const r = this.resolvePendingFim;
+        this.resolvePendingFim = null;
+
         const result = await this.doFimComplete(
           { prefix, suffix, language: document.languageId, filePath: document.uri.fsPath },
           document,
           position,
           token
         );
-        resolve(result);
+        r?.(result);
       }, this.config.debounceMs);
     });
   }
