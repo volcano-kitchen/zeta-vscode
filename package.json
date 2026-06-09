@@ -170,7 +170,7 @@
     {
       "command": "zeta.acceptAndAdvance",
       "key": "tab",
-      "when": "inlineSuggestionVisible && zeta.hasActivePrediction"
+      "when": "inlineSuggestionVisible && !suggestWidgetVisible"
     },
     {
       "command": "zeta.jumpToNextEditLocation",
@@ -189,7 +189,7 @@
     },
     {
       "command": "zeta.forcePredict",
-      "key": "ctrl+enter",
+      "key": "ctrl+shift+enter",
       "when": "editorTextFocus"
     }
   ],

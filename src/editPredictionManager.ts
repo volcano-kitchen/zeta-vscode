@@ -177,9 +177,16 @@ export class EditPredictionManager {
 
     const editableStartLine = Math.max(0, cursorPosition.line - EDITABLE_BEFORE);
     const editableEndLine = Math.min(document.lineCount - 1, cursorPosition.line + EDITABLE_AFTER);
-    const editableText = getTextRange(document, editableStartLine, editableEndLine + 1);
+
+    // must match promptBuilder.ts offset-based slicing exactly
+    const editableStartOffset = document.offsetAt(new vscode.Position(editableStartLine, 0));
+    const editableEndLineLen = document.lineAt(editableEndLine).text.length;
+    const editableEndOffset = document.offsetAt(new vscode.Position(editableEndLine, editableEndLineLen));
+    const editableText = document.getText().slice(editableStartOffset, editableEndOffset);
+
     const blockOffsets = splitIntoBlocks(editableText, MIN_BLOCK, MAX_BLOCK);
 
+    const fullText = document.getText();
     for (const region of regions) {
       const startBlockIdx = region.markerIndex - 1;
       const endBlockIdx = region.endMarkerIndex - 1;
@@ -187,26 +194,24 @@ export class EditPredictionManager {
         continue;
       }
 
-      // Map byte offsets within editable text back to document line ranges
-      const startLine = mapOffsetToLine(document, editableStartLine, blockOffsets[startBlockIdx]);
-      const endOffset = blockOffsets[endBlockIdx + 1];
-      const endLine = mapOffsetToLine(document, editableStartLine, endOffset);
+      const startOffset = editableStartOffset + blockOffsets[startBlockIdx];
+      const endOffset = editableStartOffset + blockOffsets[endBlockIdx + 1];
 
-      const clampedStartLine = Math.max(0, startLine);
-      const clampedEndLine = Math.min(document.lineCount - 1, endLine);
+      const startLine = document.positionAt(startOffset).line;
+      const endLine = document.positionAt(endOffset).line;
 
       const range = new vscode.Range(
-        clampedStartLine,
+        startLine,
         0,
-        clampedEndLine,
-        document.lineAt(clampedEndLine).text.length
+        endLine,
+        document.lineAt(endLine).text.length
       );
 
       locations.push({
         markerIndex: region.markerIndex,
         replacement: region.replacement,
         range,
-        line: clampedStartLine,
+        line: startLine,
       });
     }
 
@@ -351,22 +356,4 @@ export class EditPredictionManager {
   }
 }
 
-// --- Helpers for mapping V0318 block offsets to document line ranges ---
 
-function getTextRange(document: vscode.TextDocument, startLine: number, endLine: number): string {
-  const start = document.offsetAt(new vscode.Position(Math.max(0, startLine), 0));
-  const endLineClamped = Math.min(endLine, document.lineCount - 1);
-  const endLineLen = document.lineAt(endLineClamped).text.length;
-  const end = document.offsetAt(new vscode.Position(endLineClamped, endLineLen));
-  return document.getText().slice(start, end);
-}
-
-function mapOffsetToLine(document: vscode.TextDocument, baseLine: number, byteOffset: number): number {
-  const editableStartOffset = document.offsetAt(new vscode.Position(baseLine, 0));
-  const targetOffset = editableStartOffset + byteOffset;
-  for (let line = baseLine; line < document.lineCount; line++) {
-    const lineEnd = document.offsetAt(new vscode.Position(line, document.lineAt(line).text.length));
-    if (lineEnd >= targetOffset) return line;
-  }
-  return document.lineCount - 1;
-}
