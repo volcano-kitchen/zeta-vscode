@@ -1,0 +1,103 @@
+{
+  "name": "zeta-vscode",
+  "displayName": "Zeta Edit Prediction",
+  "description": "Zeta 2.1 edit prediction + FIM autocomplete for VS Code via llama.cpp",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": ["Programming Languages", "Machine Learning"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "zeta.showMenu",
+        "title": "Zeta: Show Menu"
+      },
+      {
+        "command": "zeta.toggleEnabled",
+        "title": "Zeta: Toggle Enable/Disable"
+      }
+    ],
+    "configuration": {
+      "title": "Zeta",
+      "properties": {
+        "zeta.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "llama.cpp server URL for Zeta 2.1 (OpenAI-compatible /v1/completions endpoint)"
+        },
+        "zeta.modelName": {
+          "type": "string",
+          "default": "zeta-2.1",
+          "description": "Model name sent in /v1/completions requests"
+        },
+        "zeta.maxContextTokens": {
+          "type": "number",
+          "default": 28672,
+          "description": "Max prompt tokens before truncation (model has 32K context, leaving room for output)"
+        },
+        "zeta.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "description": "Debounce delay in ms before triggering a completion request"
+        },
+        "zeta.temperature": {
+          "type": "number",
+          "default": 0.1,
+          "description": "Sampling temperature for completions"
+        },
+        "zeta.maxFimTokens": {
+          "type": "number",
+          "default": 64,
+          "description": "Max tokens for FIM autocomplete responses"
+        },
+        "zeta.maxEditPredictionTokens": {
+          "type": "number",
+          "default": 256,
+          "description": "Max tokens for edit prediction responses"
+        },
+        "zeta.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable Zeta completions globally"
+        },
+        "zeta.enableEditPrediction": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable next-edit prediction (Phase 2 - requires edit history tracking)"
+        },
+        "zeta.experimentalInjectLsp": {
+          "type": "boolean",
+          "default": false,
+          "description": "[Experimental] Inject LSP diagnostic and symbol info into prompt context"
+        },
+        "zeta.fimContextLines": {
+          "type": "number",
+          "default": 100,
+          "description": "Number of context lines before cursor for FIM prompt"
+        },
+        "zeta.fimSuffixLines": {
+          "type": "number",
+          "default": 30,
+          "description": "Number of context lines after cursor for FIM prompt"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.96.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "esbuild": "^0.25.0"
+  }
+}
