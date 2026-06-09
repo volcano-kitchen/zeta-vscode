@@ -256,12 +256,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(toggle, menu, statusBarItem);
 
-  vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('zeta')) {
-      config = loadConfig();
-      sidebarProvider?.updateConfig(config);
-    }
-  });
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('zeta')) {
+        config = loadConfig();
+        sidebarProvider?.updateConfig(config);
+      }
+    })
+  );
 
   console.log('Zeta edit prediction extension activated (Phase 2)');
 }
