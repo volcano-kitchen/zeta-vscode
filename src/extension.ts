@@ -253,7 +253,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (selected.label.startsWith('Toggle')) {
       vscode.commands.executeCommand('zeta.toggleEnabled');
     } else if (selected.label.startsWith('Open Settings')) {
-      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:zeta-vscode');
+      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:local.zeta-vscode');
     } else if (selected.label.startsWith('Test Server')) {
       vscode.commands.executeCommand('zeta.testServer');
     }
