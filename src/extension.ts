@@ -16,6 +16,9 @@ let config: ZetaConfig;
 
 async function testServerConnection(url: string): Promise<{ ok: boolean; message: string }> {
   try {
+    const cfg = vscode.workspace.getConfiguration('zeta');
+    const modelName = cfg.get<string>('modelName', 'zeta-2.1');
+    const modelInfo = cfg.inspect('modelName');
     const response = await fetch(`${url}/v1/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -23,7 +26,7 @@ async function testServerConnection(url: string): Promise<{ ok: boolean; message
         prompt: 'def hello():\n    ',
         max_tokens: 2,
         temperature: 0.1,
-        model: 'zeta-2.1',
+        model: modelName,
         stop: ['\n\n'],
       }),
       signal: AbortSignal.timeout(5000),
@@ -33,7 +36,8 @@ async function testServerConnection(url: string): Promise<{ ok: boolean; message
       return { ok: true, message: `Server responded (${response.status})` };
     }
     const text = await response.text().catch(() => '');
-    return { ok: false, message: `Error ${response.status}${text ? ': ' + text.slice(0, 100) : ''}` };
+    const info = modelInfo ? `[default:${modelInfo.defaultValue}, global:${modelInfo.globalValue}, workspace:${modelInfo.workspaceValue}]` : '';
+    return { ok: false, message: `Error ${response.status} (model:"${modelName}" ${info})${text ? ': ' + text.slice(0, 120) : ''}` };
   } catch (err: any) {
     return { ok: false, message: `Connection failed: ${err?.message || 'unknown error'}` };
   }
