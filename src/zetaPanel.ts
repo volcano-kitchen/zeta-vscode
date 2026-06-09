@@ -114,30 +114,30 @@ select { background: var(--vscode-dropdown-background); color: var(--vscode-drop
     <div class="section-title">Server</div>
     <div class="row">
       <span class="label">Status</span>
-      <span class="value"><span class="dot" style="background:${serverColor}"></span>${statusLabel}</span>
+      <span class="value"><span id="statusDot" class="dot" style="background:${serverColor}"></span><span id="statusLabel">${statusLabel}</span></span>
     </div>
     <div class="row">
       <span class="label">URL</span>
       <span class="value" style="font-size:11px">${this.config.serverUrl}</span>
     </div>
-    ${this.serverMessage ? `<div class="row"><span class="value" style="font-size:11px;color:${serverColor}">${this.escapeHtml(this.serverMessage)}</span></div>` : ''}
+    <div id="serverMsg" style="display:${this.serverMessage ? 'block' : 'none'};font-size:11px;color:${serverColor}">${this.serverMessage ? this.escapeHtml(this.serverMessage) : ''}</div>
     <div style="margin-top:6px">
-      <button onclick="postMsg('testServer')">Test Connection</button>
+      <button id="btnTestServer">Test Connection</button>
     </div>
   </div>
   <div class="section">
     <div class="section-title">Settings</div>
     <div class="row">
       <span class="label">Enabled</span>
-      <span class="value"><span class="badge ${isEnabled ? 'bg-green' : 'bg-red'}">${isEnabled ? 'ON' : 'OFF'}</span></span>
+      <span class="value"><span id="badgeEnabled" class="badge ${isEnabled ? 'bg-green' : 'bg-red'}">${isEnabled ? 'ON' : 'OFF'}</span></span>
     </div>
     <div class="row">
       <span class="label">Edit Prediction</span>
-      <span class="value"><span class="badge ${editPredOn ? 'bg-green' : 'bg-yellow'}">${editPredOn ? 'ON' : 'OFF'}</span></span>
+      <span class="value"><span id="badgeEditPred" class="badge ${editPredOn ? 'bg-green' : 'bg-yellow'}">${editPredOn ? 'ON' : 'OFF'}</span></span>
     </div>
     <div class="row">
       <span class="label">Aggressiveness</span>
-      <select onchange="postMsg('setAggressiveness', this.value)">
+      <select id="selAggressiveness">
         <option value="conservative" ${this.config.aggressivenessMode === 'conservative' ? 'selected' : ''}>Conservative</option>
         <option value="balanced" ${this.config.aggressivenessMode === 'balanced' ? 'selected' : ''}>Balanced</option>
         <option value="aggressive" ${this.config.aggressivenessMode === 'aggressive' ? 'selected' : ''}>Aggressive</option>
@@ -145,36 +145,45 @@ select { background: var(--vscode-dropdown-background); color: var(--vscode-drop
       </select>
     </div>
     <div class="actions">
-      <button onclick="postMsg('toggleEnabled')">Toggle</button>
-      <button class="sec" onclick="postMsg('toggleEditPrediction')">Edit Pred</button>
+      <button id="btnToggle">Toggle</button>
+      <button id="btnEditPred" class="sec">Edit Pred</button>
     </div>
   </div>
   <div class="section">
     <div class="section-title">Statistics</div>
-    <div class="row"><span class="label">Suggestions Shown</span><span class="value">${stats.totalShown}</span></div>
-    <div class="row"><span class="label">Accepted</span><span class="value">${stats.totalAccepted}</span></div>
+    <div class="row"><span class="label">Suggestions Shown</span><span id="statShown" class="value">${stats.totalShown}</span></div>
+    <div class="row"><span class="label">Accepted</span><span id="statAccepted" class="value">${stats.totalAccepted}</span></div>
     <div class="row">
       <span class="label">Accept Rate</span>
-      <span class="value"><span class="badge ${stats.acceptRate >= 0.5 ? 'bg-green' : stats.acceptRate >= 0.2 ? 'bg-yellow' : 'bg-red'}">${(stats.acceptRate * 100).toFixed(0)}%</span></span>
+      <span class="value"><span id="badgeRate" class="badge ${stats.acceptRate >= 0.5 ? 'bg-green' : stats.acceptRate >= 0.2 ? 'bg-yellow' : 'bg-red'}">${(stats.acceptRate * 100).toFixed(0)}%</span></span>
     </div>
   </div>
   <div class="section">
     <div class="section-title">Active Prediction</div>
     <div class="row">
       <span class="label">Status</span>
-      <span class="value"><span class="badge ${stats.hasActiveSuggestion ? 'bg-green' : 'bg-red'}">${stats.hasActiveSuggestion ? 'Active' : 'None'}</span></span>
+      <span class="value"><span id="badgePrediction" class="badge ${stats.hasActiveSuggestion ? 'bg-green' : 'bg-red'}">${stats.hasActiveSuggestion ? 'Active' : 'None'}</span></span>
     </div>
-    ${stats.hasActiveSuggestion ? `
-    <div class="row"><span class="label">Regions</span><span class="value">${stats.activeRegions}</span></div>
-    <div class="row"><span class="label">Current</span><span class="value">${stats.currentRegionIndex + 1} of ${stats.activeRegions}</span></div>
-    <div class="actions">
-      <button onclick="postMsg('acceptAll')">Accept All</button>
-      <button class="sec" onclick="postMsg('dismiss')">Dismiss</button>
-    </div>` : ''}
+    <div id="predictionDetails" style="display:${stats.hasActiveSuggestion ? 'block' : 'none'}">
+      <div class="row"><span class="label">Regions</span><span id="statRegions" class="value">${stats.activeRegions}</span></div>
+      <div class="row"><span class="label">Current</span><span id="statCurrentRegion" class="value">${stats.currentRegionIndex + 1} of ${stats.activeRegions}</span></div>
+      <div class="actions">
+        <button id="btnAcceptAll">Accept All</button>
+        <button id="btnDismiss" class="sec">Dismiss</button>
+      </div>
+    </div>
   </div>
 <script nonce="${nonce}">
-const vscode = acquireVsCodeApi();
-function postMsg(cmd, value) { vscode.postMessage({ command: cmd, value: value }); }
+(function() {
+  const vscode = acquireVsCodeApi();
+  function postMsg(cmd, value) { vscode.postMessage({ command, value }); }
+  document.getElementById('btnTestServer')?.addEventListener('click', () => postMsg('testServer'));
+  document.getElementById('btnToggle')?.addEventListener('click', () => postMsg('toggleEnabled'));
+  document.getElementById('btnEditPred')?.addEventListener('click', () => postMsg('toggleEditPrediction'));
+  document.getElementById('selAggressiveness')?.addEventListener('change', (e) => postMsg('setAggressiveness', e.target.value));
+  document.getElementById('btnAcceptAll')?.addEventListener('click', () => postMsg('acceptAll'));
+  document.getElementById('btnDismiss')?.addEventListener('click', () => postMsg('dismiss'));
+})();
 </script>
 </body>
 </html>`;
