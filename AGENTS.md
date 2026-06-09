@@ -10,16 +10,23 @@ Zeta 2.1 is an 8B-parameter code edit prediction model (Apache 2.0), fine-tuned 
 
 ```
 User types → InlineCompletionProvider (debounced)
-  → LspContext (optional: document symbols, hovers, definitions)
-  → PromptBuilder (Zeta 2.1 SPM format: suffix → prefix → lsp/context → multi-region → fim-middle)
-  → InferenceClient (HTTP POST /v1/completions to llama.cpp)
-  → Parse response → Render ghost text
+  ├→ FIM path (Phase 1): buildFimPrompt → InferenceClient → ghost text
+  └→ Edit Prediction path (Phase 2): EditPredictionManager
+       → PromptBuilder (edit history + related files + multi-marker SPM)
+       → InferenceClient
+       → Parse multi-region markers
+       → InlineCompletionItem (primary region)
+       → GutterDecorationManager (all regions)
+       → EditPredictionHoverProvider (diff preview on hover)
+       → Tab-to-advance through regions
+       → Pre-fetch next prediction
+       → Aggressiveness adaptation (accept/reject tracking)
 ```
 
 ## File Reference
 
 | File | Purpose |
-|---|---|
+|---|---|---|
 | `src/extension.ts` | Entry point — activates provider, registers status bar item, commands |
 | `src/inlineCompletionProvider.ts` | VS Code `InlineCompletionItemProvider` — handles autocomplete/explicit triggers, debounce, cancellation, LSP injection |
 | `src/inferenceClient.ts` | HTTP client to llama.cpp OpenAI-compatible `/v1/completions` with abort support |
@@ -27,11 +34,14 @@ User types → InlineCompletionProvider (debounced)
 | `src/lspContext.ts` | LSP context injection — queries document symbols, hover info, definitions at cursor |
 | `src/editHistory.ts` | Per-file edit event ring buffer + recent file path tracker (for Phase 2 edit prediction) |
 | `src/config.ts` | Typed settings loader from VS Code configuration |
+| `src/editPredictionManager.ts` | Core edit prediction lifecycle — prompt building, API calls, multi-region parsing, pre-fetch, accept/reject tracking, aggressiveness adaptation |
+| `src/gutterDecorations.ts` | Gutter arrow + overview ruler decorations for off-screen edit prediction locations |
+| `src/diffWidget.ts` | Hover provider showing compact diff preview for predicted edit regions |
 
 ## Settings (`zeta.*`)
 
 | Setting | Default | Description |
-|---|---|---|
+|---|---|---|---|
 | `serverUrl` | `http://localhost:8080` | llama.cpp server URL |
 | `modelName` | `zeta-2.1` | Model name in /v1/completions |
 | `maxContextTokens` | 28672 | Max prompt tokens (model has 32K) |
@@ -44,6 +54,11 @@ User types → InlineCompletionProvider (debounced)
 | `experimentalInjectLsp` | false | Inject LSP symbols/hover/defs into prompt |
 | `fimContextLines` | 100 | Lines before cursor for FIM |
 | `fimSuffixLines` | 30 | Lines after cursor for FIM |
+| `prefetchEnabled` | true | Speculatively pre-fetch next edit prediction |
+| `maxRelatedFiles` | 3 | Max related files to inject for cross-file context |
+| `maxEditRegions` | 5 | Max marker pairs to parse from response |
+| `aggressivenessMode` | `auto` | `auto` / `conservative` / `balanced` / `aggressive` |
+| `aggressivenessThreshold` | 0.3 | Min accept rate to maintain current level in `auto` mode |
 
 ## Prompt Formats
 
@@ -66,34 +81,37 @@ If `experimentalInjectLsp` is on, prepends:
 
 Stop tokens: `<|endoftext|>`, `<[fim-middle]>`, `\n\n`
 
-### Edit Prediction (Phase 2 — planned)
+### Edit Prediction (Phase 2 — current)
 
 ```
 <[fim-suffix]>
-{code after editable region}
-<[fim-prefix]><filename>{related/file.py}
-{related file contents}
-
+{text from cursor position to end of file}
+<[fim-prefix]>
+{related files content with <filename> tags}
 <filename>edit_history
 --- a/{file}
 +++ b/{file}
 -{old}
 +{new}
 
-<filename>{target/file.py}
-{code before editable region}
+<filename>{target/file}
+{text from start of file to cursor position}
 <|marker_1|>
-{code around cursor}<|user_cursor|>{rest of line}
+{line at cursor}<|user_cursor|>{rest of cursor line}
 <|marker_2|>
 <[fim-middle]>
 ```
 
-Expected model output:
+Expected model output (multi-region):
 ```
 <|marker_1|>
-{rewritten region content}
+{rewritten region 1 content}
 <|marker_2|>
 ```
+
+The parser also handles `marker_3`..`marker_N` for multi-region edits.
+
+Stop tokens: `<|endoftext|>`, `<[fim-middle]>`
 
 ## llama.cpp Server Setup
 
@@ -124,15 +142,21 @@ llama-server \
 
 5. **Edit history tracking** — `editHistory.ts` records per-file text edits (with old/new text and ranges) and recent file switches. Ready for edit prediction prompt building in Phase 2.
 
-## Phase 2 Plan (Edit Prediction + Long-Distance Jumps)
+## Phase 2 Plan (Edit Prediction + Long-Distance Jumps) ✓
 
-- [ ] Build full edit prediction prompt with edit_history + related files
-- [ ] Parse multi-region output (`<|marker_1|>...<|marker_2|>`)
-- [ ] Long-distance jump widget (compact diff preview near cursor)
-- [ ] Gutter arrows for off-screen edit locations
-- [ ] Tab-to-navigate + Tab-to-accept UX
-- [ ] Speculative pre-fetch on prediction shown
-- [ ] Per-user aggressiveness adaptation (accept/reject tracking)
+- [x] Build full edit prediction prompt with edit_history + related files
+- [x] Parse multi-region output (`<|marker_1|>...<|marker_2|>`)
+- [x] Long-distance jump widget (compact diff preview near cursor)
+- [x] Gutter arrows for off-screen edit locations
+- [x] Tab-to-navigate + Tab-to-accept UX
+- [x] Speculative pre-fetch on prediction shown
+- [x] Per-user aggressiveness adaptation (accept/reject tracking)
+
+### Future Ideas
+- Dual-model architecture: small FIM model (qwen2.5-coder:1.5b) for low-latency autocomplete + Zeta 2.1 for edit prediction
+- Multi-line FIM middle support
+- User-specific aggressiveness persistence across sessions
+- Per-project accept/reject stats
 
 ## Running in Development
 
