@@ -39,7 +39,8 @@ export class ZetaInlineCompletionProvider
   }
 
   getEditPredictionManager(): EditPredictionManager | null {
-    return this.editPredictionManager;
+    if (!this.editHistory) return null;
+    return this.ensureEditPredictionManager();
   }
 
   private ensureEditPredictionManager(): EditPredictionManager {
@@ -62,7 +63,8 @@ export class ZetaInlineCompletionProvider
     if (!this.config.enabled) return undefined;
 
     if (this.config.enableEditPrediction && this.editHistory) {
-      return this.handleEditPrediction(document, position, token);
+      const editResult = await this.handleEditPrediction(document, position, token);
+      if (editResult) return editResult;
     }
 
     if (context.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) {

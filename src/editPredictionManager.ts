@@ -169,24 +169,43 @@ export class EditPredictionManager {
     regions: ParsedEditRegion[]
   ): EditRegionLocation[] {
     const locations: EditRegionLocation[] = [];
+    const EDITABLE_BEFORE = 30;
+    const EDITABLE_AFTER = 10;
+    const MIN_BLOCK = 6;
+    const MAX_BLOCK = 16;
+
+    const editableStartLine = Math.max(0, cursorPosition.line - EDITABLE_BEFORE);
+    const editableEndLine = Math.min(document.lineCount - 1, cursorPosition.line + EDITABLE_AFTER);
+    const editableText = getTextRange(document, editableStartLine, editableEndLine + 1);
+    const blockOffsets = splitIntoBlocks(editableText, MIN_BLOCK, MAX_BLOCK);
 
     for (const region of regions) {
-      const targetLine = cursorPosition.line + (region.markerIndex === 1 ? 0 : region.markerIndex - 1);
-      const clampedLine = Math.max(0, Math.min(targetLine, document.lineCount - 1));
-      const lineText = document.lineAt(clampedLine).text;
+      const startBlockIdx = region.markerIndex - 1;
+      const endBlockIdx = region.endMarkerIndex - 1;
+      if (startBlockIdx >= blockOffsets.length - 1 || endBlockIdx >= blockOffsets.length - 1) {
+        continue;
+      }
+
+      // Map byte offsets within editable text back to document line ranges
+      const startLine = mapOffsetToLine(document, editableStartLine, blockOffsets[startBlockIdx]);
+      const endOffset = blockOffsets[endBlockIdx + 1];
+      const endLine = mapOffsetToLine(document, editableStartLine, endOffset);
+
+      const clampedStartLine = Math.max(0, startLine);
+      const clampedEndLine = Math.min(document.lineCount - 1, endLine);
 
       const range = new vscode.Range(
-        clampedLine,
+        clampedStartLine,
         0,
-        clampedLine,
-        lineText.length
+        clampedEndLine,
+        document.lineAt(clampedEndLine).text.length
       );
 
       locations.push({
         markerIndex: region.markerIndex,
         replacement: region.replacement,
         range,
-        line: clampedLine,
+        line: clampedStartLine,
       });
     }
 
@@ -329,4 +348,58 @@ export class EditPredictionManager {
   clearPreFetch() {
     this.preFetchSuggestion = null;
   }
+}
+
+// --- Shared helpers (mirrors promptBuilder.ts for V0318 block mapping) ---
+
+function splitIntoBlocks(text: string, minLines: number, maxLines: number): number[] {
+  if (!text) return [0, 0];
+  const lines = text.split('\n');
+  const offsets: number[] = [0];
+  let lastBoundary = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const gap = i - lastBoundary;
+    if (gap >= minLines && i > 0 && lines[i - 1].trim() === '') {
+      offsets.push(countBytes(lines.slice(0, i)));
+      lastBoundary = i;
+      continue;
+    }
+    if (gap >= maxLines) {
+      offsets.push(countBytes(lines.slice(0, i)));
+      lastBoundary = i;
+    }
+  }
+
+  const end = countBytes(lines);
+  if (offsets[offsets.length - 1] !== end) {
+    offsets.push(end);
+  }
+  return offsets;
+}
+
+function countBytes(lines: string[]): number {
+  let len = 0;
+  for (let i = 0; i < lines.length; i++) {
+    len += lines[i].length + 1;
+  }
+  return len === 0 ? 0 : len - 1;
+}
+
+function getTextRange(document: vscode.TextDocument, startLine: number, endLine: number): string {
+  const start = document.offsetAt(new vscode.Position(Math.max(0, startLine), 0));
+  const endLineClamped = Math.min(endLine, document.lineCount - 1);
+  const endLineLen = document.lineAt(endLineClamped).text.length;
+  const end = document.offsetAt(new vscode.Position(endLineClamped, endLineLen));
+  return document.getText().slice(start, end);
+}
+
+function mapOffsetToLine(document: vscode.TextDocument, baseLine: number, byteOffset: number): number {
+  const editableStartOffset = document.offsetAt(new vscode.Position(baseLine, 0));
+  const targetOffset = editableStartOffset + byteOffset;
+  for (let line = baseLine; line < document.lineCount; line++) {
+    const lineEnd = document.offsetAt(new vscode.Position(line, document.lineAt(line).text.length));
+    if (lineEnd >= targetOffset) return line;
+  }
+  return document.lineCount - 1;
 }
