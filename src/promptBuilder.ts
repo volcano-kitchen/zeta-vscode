@@ -1,9 +1,36 @@
+import * as vscode from 'vscode';
+
 export interface FimRequest {
   prefix: string;
   suffix: string;
   language?: string;
   filePath?: string;
   lspContext?: string;
+}
+
+export interface EditRegionSpec {
+  startOffset: number;
+  endOffset: number;
+  currentText: string;
+  markerIndex: number;
+}
+
+export interface EditPredictionRequest {
+  document: vscode.TextDocument;
+  cursorPosition: vscode.Position;
+  editHistory: string;
+  relatedFiles: string;
+  maxRegions: number;
+}
+
+export interface ParsedEditRegion {
+  markerIndex: number;
+  replacement: string;
+}
+
+export interface ParsedEditResponse {
+  regions: ParsedEditRegion[];
+  full: string;
 }
 
 const ENDOF_TEXT = '<|endoftext|>';
@@ -28,19 +55,31 @@ export function getFimStopTokens(): string[] {
   return [ENDOF_TEXT, FIM_MIDDLE, '\n\n'];
 }
 
-export function buildEditPredictionPrompt(params: {
-  suffix: string;
-  prefix: string;
-  cursorLine: string;
-  editHistory: string;
-  relatedFiles: string;
-  filePath?: string;
-}): string {
-  const { suffix, prefix, cursorLine, editHistory, relatedFiles, filePath } = params;
+function buildMarkerRegion(
+  document: vscode.TextDocument,
+  cursorPosition: vscode.Position,
+  regionIndex: number
+): string {
+  const line = document.lineAt(cursorPosition.line).text;
+  const beforeCursor = line.slice(0, cursorPosition.character);
+  const afterCursor = line.slice(cursorPosition.character);
+
+  return `${beforeCursor}<|user_cursor|>${afterCursor}`;
+}
+
+export function buildEditPredictionPrompt(
+  req: EditPredictionRequest
+): string {
+  const { document, cursorPosition, editHistory, relatedFiles, maxRegions } = req;
+  const offset = document.offsetAt(cursorPosition);
+  const fullText = document.getText();
+
+  const suffix = fullText.slice(offset).trimEnd();
+  const prefix = fullText.slice(0, offset);
 
   const parts: string[] = [];
 
-  parts.push(`<[fim-suffix]>\n${suffix.trimEnd()}`);
+  parts.push(`<[fim-suffix]>\n${suffix}`);
   parts.push(`<[fim-prefix]>`);
 
   if (relatedFiles) {
@@ -51,26 +90,39 @@ export function buildEditPredictionPrompt(params: {
     parts.push(`<filename>edit_history\n${editHistory}`);
   }
 
-  if (filePath) {
-    parts.push(`<filename>${filePath}`);
-  }
+  parts.push(`<filename>${document.uri.fsPath}`);
+  parts.push(prefix);
 
-  parts.push(`${prefix.trimStart()}`);
-  parts.push(`<|marker_1|>\n${cursorLine}\n<|marker_2|>`);
+  parts.push(`<|marker_1|>\n${buildMarkerRegion(document, cursorPosition, 1)}\n<|marker_2|>`);
   parts.push(FIM_MIDDLE);
 
   return parts.join('\n');
 }
 
 export function parseEditPredictionResponse(
-  response: string
-): { marker1?: string; marker2?: string; full?: string } {
-  const m1Match = response.match(/<\|marker_1\|>([\s\S]*?)(?:<\|marker_2\|>|$)/);
-  const m2Match = response.match(/<\|marker_2\|>([\s\S]*?)$/);
+  response: string,
+  maxRegions: number = 5
+): ParsedEditResponse {
+  const regions: ParsedEditRegion[] = [];
 
-  return {
-    marker1: m1Match?.[1]?.trim(),
-    marker2: m2Match?.[1]?.trim(),
-    full: response,
-  };
+  for (let i = 1; i <= maxRegions; i++) {
+    const pattern = new RegExp(
+      `<\\|marker_${i}\\|>([\\s\\S]*?)(?:<\\|marker_${i + 1}\\|>|$)`
+    );
+    const match = response.match(pattern);
+    if (match) {
+      regions.push({
+        markerIndex: i,
+        replacement: match[1].trim(),
+      });
+    } else {
+      break;
+    }
+  }
+
+  return { regions, full: response };
+}
+
+export function getEditPredictionStopTokens(): string[] {
+  return [ENDOF_TEXT, FIM_MIDDLE];
 }

@@ -1,0 +1,315 @@
+import * as vscode from 'vscode';
+import { EditHistoryTracker } from './editHistory';
+import { InferenceClient } from './inferenceClient';
+import {
+  buildEditPredictionPrompt,
+  parseEditPredictionResponse,
+  getEditPredictionStopTokens,
+  ParsedEditRegion,
+} from './promptBuilder';
+import { ZetaConfig } from './config';
+
+export interface EditRegionLocation {
+  markerIndex: number;
+  replacement: string;
+  range: vscode.Range;
+  line: number;
+}
+
+export interface EditPredictionSuggestion {
+  regions: EditRegionLocation[];
+  fullResponse: string;
+}
+
+function tokenToSignal(token: vscode.CancellationToken): AbortSignal {
+  const ctrl = new AbortController();
+  token.onCancellationRequested(() => ctrl.abort());
+  return ctrl.signal;
+}
+
+export class EditPredictionManager {
+  private history: EditHistoryTracker;
+  private client: InferenceClient;
+  private config: ZetaConfig;
+
+  private currentSuggestion: EditPredictionSuggestion | null = null;
+  private currentRegionIndex: number = 0;
+
+  private totalShown: number = 0;
+  private totalAccepted: number = 0;
+
+  private preFetchSuggestion: EditPredictionSuggestion | null = null;
+  private preFetchInFlight: boolean = false;
+
+  private _onDidUpdateSuggestion = new vscode.EventEmitter<EditPredictionSuggestion | null>();
+  readonly onDidUpdateSuggestion: vscode.Event<EditPredictionSuggestion | null> =
+    this._onDidUpdateSuggestion.event;
+
+  constructor(
+    history: EditHistoryTracker,
+    client: InferenceClient,
+    config: ZetaConfig
+  ) {
+    this.history = history;
+    this.client = client;
+    this.config = config;
+  }
+
+  updateConfig(config: ZetaConfig) {
+    this.config = config;
+    this.client.updateConfig(config);
+  }
+
+  cancel() {
+    this.client.cancel();
+    this.preFetchSuggestion = null;
+    this.preFetchInFlight = false;
+  }
+
+  private async getRelatedFilesContent(): Promise<string> {
+    const recentPaths = this.history.getRecentPaths();
+    const maxFiles = this.config.maxRelatedFiles;
+    if (maxFiles <= 0) return '';
+
+    const contents: string[] = [];
+    const seen = new Set<string>();
+
+    for (const uriStr of recentPaths) {
+      if (seen.size >= maxFiles) break;
+      if (seen.has(uriStr)) continue;
+      seen.add(uriStr);
+
+      try {
+        const uri = vscode.Uri.parse(uriStr);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const text = doc.getText();
+        const lines = text.split('\n');
+        const preview = lines.slice(0, 100).join('\n');
+        contents.push(`<filename>${uri.fsPath}\n${preview}`);
+      } catch {
+        // skip
+      }
+    }
+
+    return contents.join('\n');
+  }
+
+  async getSuggestion(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken
+  ): Promise<EditPredictionSuggestion | null> {
+    if (this.preFetchSuggestion) {
+      const sug = this.preFetchSuggestion;
+      this.preFetchSuggestion = null;
+      this.preFetchInFlight = false;
+      this.setSuggestion(sug);
+      return sug;
+    }
+
+    const editHistory = this.history.getEditHistoryAsDiff(document.uri.toString());
+    const relatedFiles = await this.getRelatedFilesContent();
+
+    const prompt = buildEditPredictionPrompt({
+      document,
+      cursorPosition: position,
+      editHistory,
+      relatedFiles,
+      maxRegions: this.config.maxEditRegions,
+    });
+
+    const stop = getEditPredictionStopTokens();
+    const maxTokens = this.config.maxEditPredictionTokens;
+
+    const response = await this.client.complete(prompt, maxTokens, stop, tokenToSignal(token));
+
+    if (!response || token.isCancellationRequested) return null;
+
+    const parsed = parseEditPredictionResponse(response, this.config.maxEditRegions);
+
+    if (parsed.regions.length === 0) return null;
+
+    const locations = this.resolveRegionLocations(
+      document,
+      position,
+      parsed.regions
+    );
+
+    if (locations.length === 0) return null;
+
+    const suggestion: EditPredictionSuggestion = {
+      regions: locations,
+      fullResponse: parsed.full,
+    };
+
+    this.setSuggestion(suggestion);
+    this.totalShown++;
+
+    if (this.config.prefetchEnabled) {
+      this.prefetchNext(document, position);
+    }
+
+    return suggestion;
+  }
+
+  private setSuggestion(suggestion: EditPredictionSuggestion | null) {
+    this.currentSuggestion = suggestion;
+    this.currentRegionIndex = 0;
+    vscode.commands.executeCommand(
+      'setContext',
+      'zeta.hasActivePrediction',
+      suggestion !== null
+    );
+    this._onDidUpdateSuggestion.fire(suggestion);
+  }
+
+  private resolveRegionLocations(
+    document: vscode.TextDocument,
+    cursorPosition: vscode.Position,
+    regions: ParsedEditRegion[]
+  ): EditRegionLocation[] {
+    const locations: EditRegionLocation[] = [];
+
+    for (const region of regions) {
+      const targetLine = cursorPosition.line + (region.markerIndex === 1 ? 0 : region.markerIndex - 1);
+      const clampedLine = Math.max(0, Math.min(targetLine, document.lineCount - 1));
+      const lineText = document.lineAt(clampedLine).text;
+
+      const range = new vscode.Range(
+        clampedLine,
+        0,
+        clampedLine,
+        lineText.length
+      );
+
+      locations.push({
+        markerIndex: region.markerIndex,
+        replacement: region.replacement,
+        range,
+        line: clampedLine,
+      });
+    }
+
+    return locations;
+  }
+
+  private async prefetchNext(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ) {
+    if (this.preFetchInFlight) return;
+    this.preFetchInFlight = true;
+
+    try {
+      const editHistory = this.history.getEditHistoryAsDiff(document.uri.toString());
+      const relatedFiles = await this.getRelatedFilesContent();
+
+      const prompt = buildEditPredictionPrompt({
+        document,
+        cursorPosition: position,
+        editHistory,
+        relatedFiles,
+        maxRegions: this.config.maxEditRegions,
+      });
+
+      const stop = getEditPredictionStopTokens();
+      const maxTokens = this.config.maxEditPredictionTokens;
+
+      const response = await this.client.complete(prompt, maxTokens, stop);
+
+      if (response) {
+        const parsed = parseEditPredictionResponse(response, this.config.maxEditRegions);
+        if (parsed.regions.length > 0) {
+          const locations = this.resolveRegionLocations(
+            document,
+            position,
+            parsed.regions
+          );
+          if (locations.length > 0) {
+            this.preFetchSuggestion = { regions: locations, fullResponse: parsed.full };
+          }
+        }
+      }
+    } catch {
+      // pre-fetch failed silently
+    } finally {
+      this.preFetchInFlight = false;
+    }
+  }
+
+  getCurrentSuggestion(): EditPredictionSuggestion | null {
+    return this.currentSuggestion;
+  }
+
+  getCurrentRegionIndex(): number {
+    return this.currentRegionIndex;
+  }
+
+  getCurrentRegion(): EditRegionLocation | null {
+    if (!this.currentSuggestion) return null;
+    if (this.currentRegionIndex >= this.currentSuggestion.regions.length) return null;
+    return this.currentSuggestion.regions[this.currentRegionIndex];
+  }
+
+  advanceToNextRegion(): EditRegionLocation | null {
+    if (!this.currentSuggestion) return null;
+    this.currentRegionIndex++;
+    if (this.currentRegionIndex >= this.currentSuggestion.regions.length) {
+      this.setSuggestion(null);
+      return null;
+    }
+    return this.currentSuggestion.regions[this.currentRegionIndex];
+  }
+
+  goToPrevRegion(): EditRegionLocation | null {
+    if (!this.currentSuggestion) return null;
+    this.currentRegionIndex = Math.max(0, this.currentRegionIndex - 1);
+    return this.currentSuggestion.regions[this.currentRegionIndex];
+  }
+
+  hasMoreRegions(): boolean {
+    if (!this.currentSuggestion) return false;
+    return this.currentRegionIndex < this.currentSuggestion.regions.length - 1;
+  }
+
+  recordAccept() {
+    this.totalAccepted++;
+  }
+
+  recordReject() {
+    // rejected — still track it
+  }
+
+  getAcceptRate(): number {
+    if (this.totalShown === 0) return 0;
+    return this.totalAccepted / this.totalShown;
+  }
+
+  getEffectiveMaxRegions(): number {
+    switch (this.config.aggressivenessMode) {
+      case 'conservative':
+        return 1;
+      case 'balanced':
+        return Math.min(this.config.maxEditRegions, 3);
+      case 'aggressive':
+        return this.config.maxEditRegions;
+      case 'auto': {
+        const rate = this.getAcceptRate();
+        if (rate < 0.2) return Math.min(this.config.maxEditRegions, 1);
+        if (rate < 0.4) return Math.min(this.config.maxEditRegions, 2);
+        if (rate < 0.6) return Math.min(this.config.maxEditRegions, 3);
+        return this.config.maxEditRegions;
+      }
+      default:
+        return this.config.maxEditRegions;
+    }
+  }
+
+  clearSuggestion() {
+    this.setSuggestion(null);
+  }
+
+  clearPreFetch() {
+    this.preFetchSuggestion = null;
+  }
+}

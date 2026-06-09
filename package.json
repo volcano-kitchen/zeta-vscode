@@ -20,6 +20,26 @@
       {
         "command": "zeta.toggleEnabled",
         "title": "Zeta: Toggle Enable/Disable"
+      },
+      {
+        "command": "zeta.acceptAndAdvance",
+        "title": "Zeta: Accept current edit and advance to next region"
+      },
+      {
+        "command": "zeta.jumpToNextEditLocation",
+        "title": "Zeta: Jump to next edit prediction location"
+      },
+      {
+        "command": "zeta.jumpToPrevEditLocation",
+        "title": "Zeta: Jump to previous edit prediction location"
+      },
+      {
+        "command": "zeta.acceptAllEdits",
+        "title": "Zeta: Accept all pending edit predictions"
+      },
+      {
+        "command": "zeta.dismissPrediction",
+        "title": "Zeta: Dismiss current edit prediction"
       }
     ],
     "configuration": {
@@ -84,10 +104,60 @@
           "type": "number",
           "default": 30,
           "description": "Number of context lines after cursor for FIM prompt"
+        },
+        "zeta.prefetchEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Speculatively pre-fetch the next edit prediction after showing one"
+        },
+        "zeta.maxRelatedFiles": {
+          "type": "number",
+          "default": 3,
+          "description": "Max related files to inject into edit prediction prompt for cross-file context"
+        },
+        "zeta.maxEditRegions": {
+          "type": "number",
+          "default": 5,
+          "description": "Max edit regions (marker pairs) to parse from a single edit prediction response"
+        },
+        "zeta.aggressivenessMode": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "conservative", "balanced", "aggressive"],
+          "description": "How aggressively to show edit predictions. 'auto' adapts based on accept/reject rate"
+        },
+        "zeta.aggressivenessThreshold": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Min accept rate (0-1) to keep showing predictions at current level when in 'auto' mode"
         }
       }
     }
   },
+  "keybindings": [
+    {
+      "command": "zeta.acceptAndAdvance",
+      "key": "tab",
+      "when": "inlineSuggestionVisible && zeta.hasActivePrediction"
+    },
+    {
+      "command": "zeta.jumpToNextEditLocation",
+      "key": "alt+down",
+      "when": "zeta.hasActivePrediction"
+    },
+    {
+      "command": "zeta.jumpToPrevEditLocation",
+      "key": "alt+up",
+      "when": "zeta.hasActivePrediction"
+    },
+    {
+      "command": "zeta.dismissPrediction",
+      "key": "escape",
+      "when": "zeta.hasActivePrediction && !suggestWidgetVisible"
+    }
+  ],
   "scripts": {
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.js",

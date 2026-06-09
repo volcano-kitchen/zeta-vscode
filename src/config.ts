@@ -13,6 +13,11 @@ export interface ZetaConfig {
   experimentalInjectLsp: boolean;
   fimContextLines: number;
   fimSuffixLines: number;
+  prefetchEnabled: boolean;
+  maxRelatedFiles: number;
+  maxEditRegions: number;
+  aggressivenessMode: 'auto' | 'conservative' | 'balanced' | 'aggressive';
+  aggressivenessThreshold: number;
 }
 
 export function loadConfig(): ZetaConfig {
@@ -30,5 +35,10 @@ export function loadConfig(): ZetaConfig {
     experimentalInjectLsp: cfg.get<boolean>('experimentalInjectLsp', false),
     fimContextLines: cfg.get<number>('fimContextLines', 100),
     fimSuffixLines: cfg.get<number>('fimSuffixLines', 30),
+    prefetchEnabled: cfg.get<boolean>('prefetchEnabled', true),
+    maxRelatedFiles: cfg.get<number>('maxRelatedFiles', 3),
+    maxEditRegions: cfg.get<number>('maxEditRegions', 5),
+    aggressivenessMode: cfg.get<'auto' | 'conservative' | 'balanced' | 'aggressive'>('aggressivenessMode', 'auto'),
+    aggressivenessThreshold: cfg.get<number>('aggressivenessThreshold', 0.3),
   };
 }

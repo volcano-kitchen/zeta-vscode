@@ -3,6 +3,8 @@ import { InferenceClient } from './inferenceClient';
 import { buildFimPrompt, getFimStopTokens, FimRequest } from './promptBuilder';
 import { getLspContext } from './lspContext';
 import { ZetaConfig, loadConfig } from './config';
+import { EditPredictionManager } from './editPredictionManager';
+import { EditHistoryTracker } from './editHistory';
 
 export class ZetaInlineCompletionProvider
   implements vscode.InlineCompletionItemProvider
@@ -11,6 +13,11 @@ export class ZetaInlineCompletionProvider
   private config: ZetaConfig;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingRequest: AbortController | null = null;
+  private editPredictionManager: EditPredictionManager | null = null;
+  private editHistory: EditHistoryTracker | null = null;
+
+  private _onDidGetSuggestion = new vscode.EventEmitter<void>();
+  readonly onDidGetSuggestion: vscode.Event<void> = this._onDidGetSuggestion.event;
 
   constructor() {
     this.config = loadConfig();
@@ -20,8 +27,30 @@ export class ZetaInlineCompletionProvider
       if (e.affectsConfiguration('zeta')) {
         this.config = loadConfig();
         this.client.updateConfig(this.config);
+        if (this.editPredictionManager) {
+          this.editPredictionManager.updateConfig(this.config);
+        }
       }
     });
+  }
+
+  setEditHistory(history: EditHistoryTracker) {
+    this.editHistory = history;
+  }
+
+  getEditPredictionManager(): EditPredictionManager | null {
+    return this.editPredictionManager;
+  }
+
+  private ensureEditPredictionManager(): EditPredictionManager {
+    if (!this.editPredictionManager) {
+      this.editPredictionManager = new EditPredictionManager(
+        this.editHistory!,
+        this.client,
+        this.config
+      );
+    }
+    return this.editPredictionManager;
   }
 
   async provideInlineCompletionItems(
@@ -32,11 +61,58 @@ export class ZetaInlineCompletionProvider
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
     if (!this.config.enabled) return undefined;
 
+    if (this.config.enableEditPrediction && this.editHistory) {
+      return this.handleEditPrediction(document, position, token);
+    }
+
     if (context.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) {
       return this.handleAutomatic(document, position, token);
     }
 
     return this.handleExplicit(document, position, token);
+  }
+
+  private async handleEditPrediction(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken
+  ): Promise<vscode.InlineCompletionItem[] | undefined> {
+    return new Promise(resolve => {
+      if (this.debounceTimer) clearTimeout(this.debounceTimer);
+
+      const offset = document.offsetAt(position);
+      const prefix = document.getText().slice(0, offset);
+      const suffix = document.getText().slice(offset);
+
+      if (!prefix.trim() && !suffix.trim()) {
+        resolve(undefined);
+        return;
+      }
+
+      this.debounceTimer = setTimeout(async () => {
+        if (token.isCancellationRequested) {
+          resolve(undefined);
+          return;
+        }
+
+        const manager = this.ensureEditPredictionManager();
+        const suggestion = await manager.getSuggestion(document, position, token);
+
+        if (!suggestion || suggestion.regions.length === 0) {
+          resolve(undefined);
+          return;
+        }
+
+        const primaryRegion = suggestion.regions[0];
+        const item = new vscode.InlineCompletionItem(
+          primaryRegion.replacement,
+          primaryRegion.range
+        );
+
+        this._onDidGetSuggestion.fire();
+        resolve([item]);
+      }, this.config.debounceMs);
+    });
   }
 
   private async handleAutomatic(
