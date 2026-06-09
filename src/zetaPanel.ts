@@ -2,6 +2,13 @@ import * as vscode from 'vscode';
 import { EditPredictionManager } from './editPredictionManager';
 import { ZetaConfig } from './config';
 
+function getNonce(): string {
+  let text = '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 64; i++) text += chars.charAt(Math.floor(Math.random() * chars.length));
+  return text;
+}
+
 export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'zeta.sidebar';
   private _view?: vscode.WebviewView;
@@ -22,7 +29,8 @@ export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
 
   refresh() {
     if (this._view) {
-      this._view.webview.html = this.getHtml();
+      const nonce = getNonce();
+      this._view.webview.html = this.getHtml(nonce);
     }
   }
 
@@ -34,8 +42,9 @@ export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     this._view = webviewView;
+    const nonce = getNonce();
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = this.getHtml();
+    webviewView.webview.html = this.getHtml(nonce);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.command) {
@@ -66,117 +75,38 @@ export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private getHtml(): string {
+  private getHtml(nonce: string): string {
     const isEnabled = this.config.enabled;
     const editPredOn = this.config.enableEditPrediction;
     const stats = this.manager.getStats();
-    const serverOk = this.serverStatus === 'ok';
     const serverColor = this.serverStatus === 'ok' ? '#4ec947' : this.serverStatus === 'error' ? '#f14c4c' : '#888';
+    const statusLabel = this.serverStatus === 'ok' ? 'Connected' : this.serverStatus === 'error' ? 'Error' : 'Unknown';
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
-body {
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
-  color: var(--vscode-foreground);
-  padding: 8px;
-  margin: 0;
-}
-.section {
-  margin-bottom: 16px;
-}
-.section-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--vscode-descriptionForeground);
-  margin-bottom: 8px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-}
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 0;
-}
-.label {
-  color: var(--vscode-foreground);
-}
-.value {
-  color: var(--vscode-descriptionForeground);
-  font-variant-numeric: tabular-nums;
-}
-.badge {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-weight: 500;
-}
-.badge-green {
-  background: #4ec94733;
-  color: #4ec947;
-}
-.badge-red {
-  background: #f14c4c33;
-  color: #f14c4c;
-}
-.badge-yellow {
-  background: #e2b71433;
-  color: #e2b714;
-}
-button {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  padding: 4px 12px;
-  border-radius: 2px;
-  cursor: pointer;
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
-  width: 100%;
-  text-align: center;
-}
-button:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-button.secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-}
-button.secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-select {
-  background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border);
-  padding: 2px 6px;
-  border-radius: 2px;
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
-}
-.actions {
-  display: flex;
-  gap: 4px;
-  margin-top: 8px;
-}
-.actions button {
-  flex: 1;
-}
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 4px;
-}
+body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); padding: 8px; margin: 0; }
+.section { margin-bottom: 16px; }
+.section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--vscode-descriptionForeground); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--vscode-panel-border); }
+.row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+.label { color: var(--vscode-foreground); }
+.value { color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 500; }
+.bg-green { background: #4ec94733; color: #4ec947; }
+.bg-red { background: #f14c4c33; color: #f14c4c; }
+.bg-yellow { background: #e2b71433; color: #e2b714; }
+button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 4px 12px; border-radius: 2px; cursor: pointer; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); width: 100%; text-align: center; }
+button:hover { background: var(--vscode-button-hoverBackground); }
+button.sec { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+button.sec:hover { background: var(--vscode-button-secondaryHoverBackground); }
+select { background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border); padding: 2px 6px; border-radius: 2px; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
+.actions { display: flex; gap: 4px; margin-top: 8px; }
+.actions button { flex: 1; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
 </style>
 </head>
 <body>
@@ -184,34 +114,26 @@ select {
     <div class="section-title">Server</div>
     <div class="row">
       <span class="label">Status</span>
-      <span class="value">
-        <span class="status-dot" style="background:${serverColor}"></span>
-        ${this.serverStatus === 'ok' ? 'Connected' : this.serverStatus === 'error' ? 'Error' : 'Unknown'}
-      </span>
+      <span class="value"><span class="dot" style="background:${serverColor}"></span>${statusLabel}</span>
     </div>
     <div class="row">
       <span class="label">URL</span>
       <span class="value" style="font-size:11px">${this.config.serverUrl}</span>
     </div>
-    ${this.serverMessage ? `<div class="row"><span class="value" style="font-size:11px;color:${serverColor}">${this.serverMessage}</span></div>` : ''}
+    ${this.serverMessage ? `<div class="row"><span class="value" style="font-size:11px;color:${serverColor}">${this.escapeHtml(this.serverMessage)}</span></div>` : ''}
     <div style="margin-top:6px">
       <button onclick="postMsg('testServer')">Test Connection</button>
     </div>
   </div>
-
   <div class="section">
     <div class="section-title">Settings</div>
     <div class="row">
       <span class="label">Enabled</span>
-      <span class="value">
-        <span class="badge ${isEnabled ? 'badge-green' : 'badge-red'}">${isEnabled ? 'ON' : 'OFF'}</span>
-      </span>
+      <span class="value"><span class="badge ${isEnabled ? 'bg-green' : 'bg-red'}">${isEnabled ? 'ON' : 'OFF'}</span></span>
     </div>
     <div class="row">
       <span class="label">Edit Prediction</span>
-      <span class="value">
-        <span class="badge ${editPredOn ? 'badge-green' : 'badge-yellow'}">${editPredOn ? 'ON' : 'OFF'}</span>
-      </span>
+      <span class="value"><span class="badge ${editPredOn ? 'bg-green' : 'bg-yellow'}">${editPredOn ? 'ON' : 'OFF'}</span></span>
     </div>
     <div class="row">
       <span class="label">Aggressiveness</span>
@@ -224,63 +146,41 @@ select {
     </div>
     <div class="actions">
       <button onclick="postMsg('toggleEnabled')">Toggle</button>
-      <button class="secondary" onclick="postMsg('toggleEditPrediction')">Edit Pred</button>
+      <button class="sec" onclick="postMsg('toggleEditPrediction')">Edit Pred</button>
     </div>
   </div>
-
   <div class="section">
     <div class="section-title">Statistics</div>
-    <div class="row">
-      <span class="label">Suggestions Shown</span>
-      <span class="value">${stats.totalShown}</span>
-    </div>
-    <div class="row">
-      <span class="label">Accepted</span>
-      <span class="value">${stats.totalAccepted}</span>
-    </div>
+    <div class="row"><span class="label">Suggestions Shown</span><span class="value">${stats.totalShown}</span></div>
+    <div class="row"><span class="label">Accepted</span><span class="value">${stats.totalAccepted}</span></div>
     <div class="row">
       <span class="label">Accept Rate</span>
-      <span class="value">
-        <span class="badge ${stats.acceptRate >= 0.5 ? 'badge-green' : stats.acceptRate >= 0.2 ? 'badge-yellow' : 'badge-red'}">
-          ${(stats.acceptRate * 100).toFixed(0)}%
-        </span>
-      </span>
+      <span class="value"><span class="badge ${stats.acceptRate >= 0.5 ? 'bg-green' : stats.acceptRate >= 0.2 ? 'bg-yellow' : 'bg-red'}">${(stats.acceptRate * 100).toFixed(0)}%</span></span>
     </div>
   </div>
-
   <div class="section">
     <div class="section-title">Active Prediction</div>
     <div class="row">
       <span class="label">Status</span>
-      <span class="value">
-        <span class="badge ${stats.hasActiveSuggestion ? 'badge-green' : 'badge-red'}">
-          ${stats.hasActiveSuggestion ? 'Active' : 'None'}
-        </span>
-      </span>
+      <span class="value"><span class="badge ${stats.hasActiveSuggestion ? 'bg-green' : 'bg-red'}">${stats.hasActiveSuggestion ? 'Active' : 'None'}</span></span>
     </div>
     ${stats.hasActiveSuggestion ? `
-    <div class="row">
-      <span class="label">Regions</span>
-      <span class="value">${stats.activeRegions}</span>
-    </div>
-    <div class="row">
-      <span class="label">Current</span>
-      <span class="value">${stats.currentRegionIndex + 1} of ${stats.activeRegions}</span>
-    </div>
+    <div class="row"><span class="label">Regions</span><span class="value">${stats.activeRegions}</span></div>
+    <div class="row"><span class="label">Current</span><span class="value">${stats.currentRegionIndex + 1} of ${stats.activeRegions}</span></div>
     <div class="actions">
       <button onclick="postMsg('acceptAll')">Accept All</button>
-      <button class="secondary" onclick="postMsg('dismiss')">Dismiss</button>
-    </div>
-    ` : ''}
+      <button class="sec" onclick="postMsg('dismiss')">Dismiss</button>
+    </div>` : ''}
   </div>
-
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-function postMsg(cmd, value) {
-  vscode.postMessage({ command: cmd, value: value });
-}
+function postMsg(cmd, value) { vscode.postMessage({ command: cmd, value: value }); }
 </script>
 </body>
 </html>`;
+  }
+
+  private escapeHtml(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 }
