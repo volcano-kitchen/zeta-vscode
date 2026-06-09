@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { InferenceClient } from './inferenceClient';
-import { buildFimPrompt, getFimStopTokens, FimRequest } from './promptBuilder';
+import { buildFimPrompt, getFimStopTokens, sanitizeCompletion, FimRequest } from './promptBuilder';
 import { getLspContext } from './lspContext';
 import { ZetaConfig, loadConfig } from './config';
 import { EditPredictionManager } from './editPredictionManager';
@@ -205,8 +205,11 @@ export class ZetaInlineCompletionProvider
 
       if (!completion || token.isCancellationRequested) return undefined;
 
+      const cleaned = sanitizeCompletion(completion);
+      if (!cleaned) return undefined;
+
       const item = new vscode.InlineCompletionItem(
-        completion,
+        cleaned,
         new vscode.Range(position, position)
       );
 

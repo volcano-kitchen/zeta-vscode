@@ -249,3 +249,16 @@ export function parseEditPredictionResponse(
 export function getEditPredictionStopTokens(): string[] {
   return [ENDOF_TEXT, V0318_END_MARKER, FIM_MIDDLE];
 }
+
+// Strip all V0318 control tokens from model output (for FIM path)
+export function sanitizeCompletion(text: string): string {
+  return text
+    .replace(/<\|marker_\d+\|>/g, '')
+    .replace(/<\|user_cursor\|>/g, '')
+    .replace(/<\[end▁of▁sentence\]>/g, '')
+    .replace(/NO_EDITS\s*/g, '')
+    .replace(/<<<<<<< CURRENT\s*/g, '')
+    .replace(/=======\s*/g, '')
+    .replace(/>>>>>>> UPDATED\s*/g, '')
+    .trim();
+}
