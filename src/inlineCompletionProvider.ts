@@ -116,10 +116,24 @@ export class ZetaInlineCompletionProvider
       }
 
       const primaryRegion = suggestion.regions[0];
-      const item = new vscode.InlineCompletionItem(
-        primaryRegion.replacement,
-        primaryRegion.range
-      );
+      const cursorOffset = document.offsetAt(position);
+      const rangeStart = document.offsetAt(primaryRegion.range.start);
+      const rangeEnd = document.offsetAt(primaryRegion.range.end);
+
+      let text = primaryRegion.replacement;
+      let range = primaryRegion.range;
+
+      // If cursor is inside the region range, trim the already-typed prefix
+      // so ghost text only shows what comes after the cursor
+      if (cursorOffset > rangeStart && cursorOffset <= rangeEnd) {
+        const existingBeforeCursor = document.getText().slice(rangeStart, cursorOffset);
+        if (text.startsWith(existingBeforeCursor)) {
+          text = text.slice(existingBeforeCursor.length);
+          range = new vscode.Range(position, primaryRegion.range.end);
+        }
+      }
+
+      const item = new vscode.InlineCompletionItem(text, range);
 
       this._onDidGetSuggestion.fire();
       resolve([item]);
