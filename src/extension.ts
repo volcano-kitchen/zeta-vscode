@@ -4,12 +4,42 @@ import { EditHistoryTracker } from './editHistory';
 import { GutterDecorationManager } from './gutterDecorations';
 import { EditPredictionHoverProvider } from './diffWidget';
 import { EditPredictionManager } from './editPredictionManager';
+import { ZetaSidebarProvider } from './zetaPanel';
+import { loadConfig, ZetaConfig } from './config';
 
 let provider: ZetaInlineCompletionProvider | null = null;
 let editHistory: EditHistoryTracker | null = null;
 let gutterDecorationManager: GutterDecorationManager | null = null;
+let sidebarProvider: ZetaSidebarProvider | null = null;
+let config: ZetaConfig;
+
+async function testServerConnection(url: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    const response = await fetch(`${url}/v1/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'def hello():\n    ',
+        max_tokens: 2,
+        temperature: 0.1,
+        model: 'zeta-2.1',
+        stop: ['\n\n'],
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (response.ok) {
+      return { ok: true, message: `Server responded (${response.status})` };
+    }
+    const text = await response.text().catch(() => '');
+    return { ok: false, message: `Error ${response.status}${text ? ': ' + text.slice(0, 100) : ''}` };
+  } catch (err: any) {
+    return { ok: false, message: `Connection failed: ${err?.message || 'unknown error'}` };
+  }
+}
 
 export function activate(context: vscode.ExtensionContext) {
+  config = loadConfig();
   provider = new ZetaInlineCompletionProvider();
   editHistory = new EditHistoryTracker();
   provider.setEditHistory(editHistory);
@@ -26,6 +56,12 @@ export function activate(context: vscode.ExtensionContext) {
   const editPredManager = provider.getEditPredictionManager();
 
   if (editPredManager) {
+    sidebarProvider = new ZetaSidebarProvider(editPredManager, config);
+
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(ZetaSidebarProvider.viewType, sidebarProvider)
+    );
+
     const hoverProvider = vscode.languages.registerHoverProvider(
       { pattern: '**' },
       new EditPredictionHoverProvider(editPredManager)
@@ -38,6 +74,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (editor && suggestion) {
         gutterDecorationManager!.update(editor, suggestion.regions, editPredManager.getCurrentRegionIndex());
       }
+      sidebarProvider?.refresh();
     });
 
     editPredManager.onDidUpdateSuggestion(suggestion => {
@@ -49,6 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
           gutterDecorationManager!.clear(editor);
         }
       }
+      sidebarProvider?.refresh();
     });
 
     vscode.window.onDidChangeActiveTextEditor(() => {
@@ -60,6 +98,22 @@ export function activate(context: vscode.ExtensionContext) {
         gutterDecorationManager!.clear(editor);
       }
     });
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('zeta.testServer', async () => {
+        const url = vscode.workspace.getConfiguration('zeta').get<string>('serverUrl', 'http://localhost:8080');
+        sidebarProvider?.setServerStatus('unknown', 'Testing...');
+
+        const result = await testServerConnection(url);
+        if (result.ok) {
+          sidebarProvider?.setServerStatus('ok', result.message);
+          vscode.window.showInformationMessage(`Zeta server: ${result.message}`);
+        } else {
+          sidebarProvider?.setServerStatus('error', result.message);
+          vscode.window.showErrorMessage(`Zeta server: ${result.message}`);
+        }
+      })
+    );
 
     context.subscriptions.push(
       vscode.commands.registerCommand('zeta.acceptAndAdvance', async () => {
@@ -111,6 +165,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.TextEditorRevealType.Default
           );
           gutterDecorationManager!.update(editor, suggestion.regions, editPredManager.getCurrentRegionIndex());
+          sidebarProvider?.refresh();
         }
       })
     );
@@ -132,6 +187,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.TextEditorRevealType.Default
           );
           gutterDecorationManager!.update(editor, suggestion.regions, editPredManager.getCurrentRegionIndex());
+          sidebarProvider?.refresh();
         }
       })
     );
@@ -152,6 +208,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         editPredManager.recordAccept();
         editPredManager.clearSuggestion();
+        sidebarProvider?.refresh();
       })
     );
 
@@ -160,6 +217,7 @@ export function activate(context: vscode.ExtensionContext) {
         editPredManager.recordReject();
         editPredManager.clearSuggestion();
         gutterDecorationManager!.clear();
+        sidebarProvider?.refresh();
       })
     );
   }
@@ -171,17 +229,22 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage(
       `Zeta completions: ${!current ? 'enabled' : 'disabled'}`
     );
+    sidebarProvider?.refresh();
   });
 
   const menu = vscode.commands.registerCommand('zeta.showMenu', async () => {
     const items: vscode.QuickPickItem[] = [
       {
         label: 'Toggle Enable/Disable',
-        description: `Currently: ${provider ? 'enabled' : 'disabled'}`,
+        description: `Currently: ${config.enabled ? 'enabled' : 'disabled'}`,
       },
       {
         label: 'Open Settings',
         description: 'Configure Zeta server URL, model, FIM, edit prediction',
+      },
+      {
+        label: 'Test Server Connection',
+        description: 'Ping llama.cpp server to verify connectivity',
       },
     ];
     const selected = await vscode.window.showQuickPick(items);
@@ -190,10 +253,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (selected.label.startsWith('Toggle')) {
       vscode.commands.executeCommand('zeta.toggleEnabled');
     } else if (selected.label.startsWith('Open Settings')) {
-      vscode.commands.executeCommand(
-        'workbench.action.openSettings',
-        '@ext:zeta-vscode'
-      );
+      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:zeta-vscode');
+    } else if (selected.label.startsWith('Test Server')) {
+      vscode.commands.executeCommand('zeta.testServer');
     }
   });
 
@@ -208,9 +270,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(toggle, menu, statusBarItem);
 
-  if (vscode.workspace.getConfiguration('zeta').get('experimentalInjectLsp')) {
-    console.log('Zeta: LSP context injection enabled');
-  }
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('zeta')) {
+      config = loadConfig();
+      sidebarProvider?.updateConfig(config);
+    }
+  });
 
   console.log('Zeta edit prediction extension activated (Phase 2)');
 }

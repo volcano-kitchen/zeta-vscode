@@ -280,9 +280,26 @@ export class EditPredictionManager {
     // rejected — still track it
   }
 
+  getTotalShown(): number { return this.totalShown; }
+
+  getTotalAccepted(): number { return this.totalAccepted; }
+
   getAcceptRate(): number {
     if (this.totalShown === 0) return 0;
     return this.totalAccepted / this.totalShown;
+  }
+
+  getStats() {
+    return {
+      totalShown: this.totalShown,
+      totalAccepted: this.totalAccepted,
+      acceptRate: this.getAcceptRate(),
+      hasActiveSuggestion: this.currentSuggestion !== null,
+      activeRegions: this.currentSuggestion?.regions.length ?? 0,
+      currentRegionIndex: this.currentRegionIndex,
+      aggressivenessMode: this.config.aggressivenessMode,
+      maxEditRegions: this.config.maxEditRegions,
+    };
   }
 
   getEffectiveMaxRegions(): number {

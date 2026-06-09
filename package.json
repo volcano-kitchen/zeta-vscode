@@ -16,6 +16,24 @@
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zeta-sidebar",
+          "title": "Zeta",
+          "icon": "$(sparkle)"
+        }
+      ]
+    },
+    "views": {
+      "zeta-sidebar": [
+        {
+          "type": "webview",
+          "id": "zeta.sidebar",
+          "name": "Zeta Control Panel"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "zeta.showMenu",
@@ -44,6 +62,10 @@
       {
         "command": "zeta.dismissPrediction",
         "title": "Zeta: Dismiss current edit prediction"
+      },
+      {
+        "command": "zeta.testServer",
+        "title": "Zeta: Test Server Connection"
       }
     ],
     "configuration": {
