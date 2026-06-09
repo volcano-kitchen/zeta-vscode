@@ -21,7 +21,7 @@
         {
           "id": "zeta-sidebar",
           "title": "Zeta",
-          "icon": "$(sparkle)"
+          "icon": "media/zeta-icon.svg"
         }
       ]
     },
