@@ -24,20 +24,34 @@ export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
 
   updateConfig(config: ZetaConfig) {
     this.config = config;
-    this.refresh();
+    this._view?.webview.postMessage({ command: 'updateConfig', config: this.getConfigForWebview() });
   }
 
   refresh() {
-    if (this._view) {
-      const nonce = getNonce();
-      this._view.webview.html = this.getHtml(nonce);
-    }
+    this._view?.webview.postMessage({ command: 'refresh', config: this.getConfigForWebview(), stats: this.getStatsForWebview(), serverStatus: this.serverStatus, serverMessage: this.serverMessage });
   }
 
   setServerStatus(status: 'unknown' | 'ok' | 'error', message: string) {
     this.serverStatus = status;
     this.serverMessage = message;
-    this.refresh();
+    this._view?.webview.postMessage({ command: 'serverStatus', status, message });
+  }
+
+  private getConfigForWebview() {
+    return {
+      serverUrl: this.config.serverUrl,
+      enabled: this.config.enabled,
+      enableEditPrediction: this.config.enableEditPrediction,
+      aggressivenessMode: this.config.aggressivenessMode,
+    };
+  }
+
+  private getStatsForWebview() {
+    return this.manager?.getStats() ?? {
+      totalShown: 0, totalAccepted: 0, acceptRate: 0,
+      hasActiveSuggestion: false, activeRegions: 0,
+      currentRegionIndex: 0, aggressivenessMode: 'auto', maxEditRegions: 5,
+    };
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
@@ -76,11 +90,7 @@ export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private getHtml(nonce: string): string {
-    const isEnabled = this.config.enabled;
-    const editPredOn = this.config.enableEditPrediction;
-    const stats = this.manager?.getStats() ?? { totalShown: 0, totalAccepted: 0, acceptRate: 0, hasActiveSuggestion: false, activeRegions: 0, currentRegionIndex: 0, aggressivenessMode: 'auto', maxEditRegions: 5 };
-    const serverColor = this.serverStatus === 'ok' ? '#4ec947' : this.serverStatus === 'error' ? '#f14c4c' : '#888';
-    const statusLabel = this.serverStatus === 'ok' ? 'Connected' : this.serverStatus === 'error' ? 'Error' : 'Unknown';
+    const stats = this.getStatsForWebview();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -114,34 +124,32 @@ select { background: var(--vscode-dropdown-background); color: var(--vscode-drop
     <div class="section-title">Server</div>
     <div class="row">
       <span class="label">Status</span>
-      <span class="value"><span id="statusDot" class="dot" style="background:${serverColor}"></span><span id="statusLabel">${statusLabel}</span></span>
+      <span class="value"><span id="srvDot" class="dot" style="background:#888"></span><span id="srvLabel">Unknown</span></span>
     </div>
     <div class="row">
       <span class="label">URL</span>
-      <span class="value" style="font-size:11px">${this.config.serverUrl}</span>
+      <span id="srvUrl" class="value" style="font-size:11px">${this.config.serverUrl}</span>
     </div>
-    <div id="serverMsg" style="display:${this.serverMessage ? 'block' : 'none'};font-size:11px;color:${serverColor}">${this.serverMessage ? this.escapeHtml(this.serverMessage) : ''}</div>
-    <div style="margin-top:6px">
-      <button id="btnTestServer">Test Connection</button>
-    </div>
+    <div id="srvMsg" style="display:none;font-size:11px"></div>
+    <div style="margin-top:6px"><button id="btnTest">Test Connection</button></div>
   </div>
   <div class="section">
     <div class="section-title">Settings</div>
     <div class="row">
       <span class="label">Enabled</span>
-      <span class="value"><span id="badgeEnabled" class="badge ${isEnabled ? 'bg-green' : 'bg-red'}">${isEnabled ? 'ON' : 'OFF'}</span></span>
+      <span id="bdgEnabled" class="value"><span class="badge ${this.config.enabled ? 'bg-green' : 'bg-red'}">${this.config.enabled ? 'ON' : 'OFF'}</span></span>
     </div>
     <div class="row">
       <span class="label">Edit Prediction</span>
-      <span class="value"><span id="badgeEditPred" class="badge ${editPredOn ? 'bg-green' : 'bg-yellow'}">${editPredOn ? 'ON' : 'OFF'}</span></span>
+      <span id="bdgEditPred" class="value"><span class="badge ${this.config.enableEditPrediction ? 'bg-green' : 'bg-yellow'}">${this.config.enableEditPrediction ? 'ON' : 'OFF'}</span></span>
     </div>
     <div class="row">
       <span class="label">Aggressiveness</span>
-      <select id="selAggressiveness">
-        <option value="conservative" ${this.config.aggressivenessMode === 'conservative' ? 'selected' : ''}>Conservative</option>
-        <option value="balanced" ${this.config.aggressivenessMode === 'balanced' ? 'selected' : ''}>Balanced</option>
-        <option value="aggressive" ${this.config.aggressivenessMode === 'aggressive' ? 'selected' : ''}>Aggressive</option>
-        <option value="auto" ${this.config.aggressivenessMode === 'auto' ? 'selected' : ''}>Auto</option>
+      <select id="selAgg">
+        <option value="conservative">Conservative</option>
+        <option value="balanced">Balanced</option>
+        <option value="aggressive">Aggressive</option>
+        <option value="auto" selected>Auto</option>
       </select>
     </div>
     <div class="actions">
@@ -151,22 +159,22 @@ select { background: var(--vscode-dropdown-background); color: var(--vscode-drop
   </div>
   <div class="section">
     <div class="section-title">Statistics</div>
-    <div class="row"><span class="label">Suggestions Shown</span><span id="statShown" class="value">${stats.totalShown}</span></div>
+    <div class="row"><span class="label">Shown</span><span id="statShown" class="value">${stats.totalShown}</span></div>
     <div class="row"><span class="label">Accepted</span><span id="statAccepted" class="value">${stats.totalAccepted}</span></div>
     <div class="row">
-      <span class="label">Accept Rate</span>
-      <span class="value"><span id="badgeRate" class="badge ${stats.acceptRate >= 0.5 ? 'bg-green' : stats.acceptRate >= 0.2 ? 'bg-yellow' : 'bg-red'}">${(stats.acceptRate * 100).toFixed(0)}%</span></span>
+      <span class="label">Rate</span>
+      <span id="statRate" class="value"><span class="badge bg-red">0%</span></span>
     </div>
   </div>
   <div class="section">
     <div class="section-title">Active Prediction</div>
     <div class="row">
       <span class="label">Status</span>
-      <span class="value"><span id="badgePrediction" class="badge ${stats.hasActiveSuggestion ? 'bg-green' : 'bg-red'}">${stats.hasActiveSuggestion ? 'Active' : 'None'}</span></span>
+      <span class="value"><span id="bdgPred" class="badge bg-red">None</span></span>
     </div>
-    <div id="predictionDetails" style="display:${stats.hasActiveSuggestion ? 'block' : 'none'}">
-      <div class="row"><span class="label">Regions</span><span id="statRegions" class="value">${stats.activeRegions}</span></div>
-      <div class="row"><span class="label">Current</span><span id="statCurrentRegion" class="value">${stats.currentRegionIndex + 1} of ${stats.activeRegions}</span></div>
+    <div id="predDetails" style="display:none">
+      <div class="row"><span class="label">Regions</span><span id="statRegions" class="value">0</span></div>
+      <div class="row"><span class="label">Current</span><span id="statCurRegion" class="value">0 of 0</span></div>
       <div class="actions">
         <button id="btnAcceptAll">Accept All</button>
         <button id="btnDismiss" class="sec">Dismiss</button>
@@ -176,20 +184,70 @@ select { background: var(--vscode-dropdown-background); color: var(--vscode-drop
 <script nonce="${nonce}">
 (function() {
   const vscode = acquireVsCodeApi();
-  function postMsg(cmd, value) { vscode.postMessage({ command, value }); }
-  document.getElementById('btnTestServer')?.addEventListener('click', () => postMsg('testServer'));
-  document.getElementById('btnToggle')?.addEventListener('click', () => postMsg('toggleEnabled'));
-  document.getElementById('btnEditPred')?.addEventListener('click', () => postMsg('toggleEditPrediction'));
-  document.getElementById('selAggressiveness')?.addEventListener('change', (e) => postMsg('setAggressiveness', e.target.value));
-  document.getElementById('btnAcceptAll')?.addEventListener('click', () => postMsg('acceptAll'));
-  document.getElementById('btnDismiss')?.addEventListener('click', () => postMsg('dismiss'));
+
+  function $(id) { return document.getElementById(id); }
+
+  document.addEventListener('click', e => {
+    const id = e.target?.id;
+    if (id === 'btnTest') vscode.postMessage({ command: 'testServer' });
+    else if (id === 'btnToggle') vscode.postMessage({ command: 'toggleEnabled' });
+    else if (id === 'btnEditPred') vscode.postMessage({ command: 'toggleEditPrediction' });
+    else if (id === 'btnAcceptAll') vscode.postMessage({ command: 'acceptAll' });
+    else if (id === 'btnDismiss') vscode.postMessage({ command: 'dismiss' });
+  });
+
+  document.addEventListener('change', e => {
+    if (e.target?.id === 'selAgg') vscode.postMessage({ command: 'setAggressiveness', value: e.target.value });
+  });
+
+  window.addEventListener('message', event => {
+    const msg = event.data;
+    switch (msg.command) {
+      case 'serverStatus':
+        $('srvDot').style.background = msg.status === 'ok' ? '#4ec947' : msg.status === 'error' ? '#f14c4c' : '#888';
+        $('srvLabel').textContent = msg.status === 'ok' ? 'Connected' : msg.status === 'error' ? 'Error' : 'Unknown';
+        if (msg.message) {
+          $('srvMsg').style.display = 'block';
+          $('srvMsg').textContent = msg.message;
+          $('srvMsg').style.color = msg.status === 'ok' ? '#4ec947' : '#f14c4c';
+        }
+        break;
+      case 'refresh':
+        const stats = msg.stats;
+        $('statShown').textContent = stats.totalShown;
+        $('statAccepted').textContent = stats.totalAccepted;
+        const rate = (stats.acceptRate * 100).toFixed(0) + '%';
+        const rateBadge = $('statRate').querySelector('.badge');
+        rateBadge.textContent = rate;
+        rateBadge.className = 'badge ' + (stats.acceptRate >= 0.5 ? 'bg-green' : stats.acceptRate >= 0.2 ? 'bg-yellow' : 'bg-red');
+        if (stats.hasActiveSuggestion) {
+          $('bdgPred').textContent = 'Active';
+          $('bdgPred').className = 'badge bg-green';
+          $('predDetails').style.display = 'block';
+          $('statRegions').textContent = stats.activeRegions;
+          $('statCurRegion').textContent = (stats.currentRegionIndex + 1) + ' of ' + stats.activeRegions;
+        } else {
+          $('bdgPred').textContent = 'None';
+          $('bdgPred').className = 'badge bg-red';
+          $('predDetails').style.display = 'none';
+        }
+        break;
+      case 'updateConfig':
+        const cfg = msg.config;
+        $('srvUrl').textContent = cfg.serverUrl;
+        const en = $('bdgEnabled').querySelector('.badge');
+        en.textContent = cfg.enabled ? 'ON' : 'OFF';
+        en.className = 'badge ' + (cfg.enabled ? 'bg-green' : 'bg-red');
+        const ep = $('bdgEditPred').querySelector('.badge');
+        ep.textContent = cfg.enableEditPrediction ? 'ON' : 'OFF';
+        ep.className = 'badge ' + (cfg.enableEditPrediction ? 'bg-green' : 'bg-yellow');
+        $('selAgg').value = cfg.aggressivenessMode;
+        break;
+    }
+  });
 })();
 </script>
 </body>
 </html>`;
-  }
-
-  private escapeHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 }
