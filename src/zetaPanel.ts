@@ -12,12 +12,12 @@ function getNonce(): string {
 export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'zeta.sidebar';
   private _view?: vscode.WebviewView;
-  private manager: EditPredictionManager;
+  private manager: EditPredictionManager | null;
   private config: ZetaConfig;
   private serverStatus: 'unknown' | 'ok' | 'error' = 'unknown';
   private serverMessage: string = '';
 
-  constructor(manager: EditPredictionManager, config: ZetaConfig) {
+  constructor(manager: EditPredictionManager | null, config: ZetaConfig) {
     this.manager = manager;
     this.config = config;
   }
@@ -78,7 +78,7 @@ export class ZetaSidebarProvider implements vscode.WebviewViewProvider {
   private getHtml(nonce: string): string {
     const isEnabled = this.config.enabled;
     const editPredOn = this.config.enableEditPrediction;
-    const stats = this.manager.getStats();
+    const stats = this.manager?.getStats() ?? { totalShown: 0, totalAccepted: 0, acceptRate: 0, hasActiveSuggestion: false, activeRegions: 0, currentRegionIndex: 0, aggressivenessMode: 'auto', maxEditRegions: 5 };
     const serverColor = this.serverStatus === 'ok' ? '#4ec947' : this.serverStatus === 'error' ? '#f14c4c' : '#888';
     const statusLabel = this.serverStatus === 'ok' ? 'Connected' : this.serverStatus === 'error' ? 'Error' : 'Unknown';
 
