@@ -14,12 +14,10 @@ export class ZetaInlineCompletionProvider
   private client: InferenceClient;
   private config: ZetaConfig;
   private fimDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private editPredDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingRequest: AbortController | null = null;
   private editPredictionManager: EditPredictionManager | null = null;
   private editHistory: EditHistoryTracker | null = null;
 
-  private resolvePendingEditPrediction: ((value: vscode.InlineCompletionItem[] | undefined) => void) | null = null;
   private resolvePendingFim: ((value: vscode.InlineCompletionItem[] | undefined) => void) | null = null;
 
   private _onDidGetSuggestion = new vscode.EventEmitter<void>();
@@ -68,13 +66,9 @@ export class ZetaInlineCompletionProvider
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
     if (!this.config.enabled) return undefined;
 
-    const isExplicit = context.triggerKind === vscode.InlineCompletionTriggerKind.Invoke;
-
     if (this.config.enableEditPrediction && this.editHistory) {
-      const editResult = await this.handleEditPrediction(document, position, token, isExplicit);
+      const editResult = await this.handleEditPrediction(document, position, token);
       if (editResult) return editResult;
-      // On explicit triggers only, fall through to FIM if edit prediction fails
-      if (!isExplicit) return undefined;
     }
 
     if (context.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) {
@@ -87,87 +81,48 @@ export class ZetaInlineCompletionProvider
   private async handleEditPrediction(
     document: vscode.TextDocument,
     position: vscode.Position,
-    token: vscode.CancellationToken,
-    immediate: boolean = false
+    token: vscode.CancellationToken
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
-    if (this.resolvePendingEditPrediction) {
-      this.resolvePendingEditPrediction(undefined);
-      this.resolvePendingEditPrediction = null;
-    }
-    if (this.editPredDebounceTimer) {
-      clearTimeout(this.editPredDebounceTimer);
-      this.editPredDebounceTimer = null;
-    }
+    if (token.isCancellationRequested) return undefined;
 
-    const run = async (resolve: (value: vscode.InlineCompletionItem[] | undefined) => void) => {
-      if (token.isCancellationRequested) {
-        resolve(undefined);
-        return;
+    const offset = document.offsetAt(position);
+    const prefix = document.getText().slice(0, offset);
+    const suffix = document.getText().slice(offset);
+    if (!prefix.trim() && !suffix.trim()) return undefined;
+
+    const manager = this.ensureEditPredictionManager();
+    const suggestion = await manager.getSuggestion(document, position, token);
+
+    if (!suggestion || suggestion.regions.length === 0) return undefined;
+
+    const primaryRegion = suggestion.regions[0];
+    const cursorOffset = document.offsetAt(position);
+    const rangeStart = document.offsetAt(primaryRegion.range.start);
+    const rangeEnd = document.offsetAt(primaryRegion.range.end);
+
+    let text = primaryRegion.replacement;
+    let range = primaryRegion.range;
+
+    if (cursorOffset > rangeStart && cursorOffset <= rangeEnd) {
+      const existingBeforeCursor = document.getText().slice(rangeStart, cursorOffset);
+      const commonPrefixLen = this.findCommonPrefixLength(text, existingBeforeCursor);
+
+      if (commonPrefixLen >= existingBeforeCursor.length * 0.5) {
+        text = text.slice(commonPrefixLen);
+        range = new vscode.Range(position, primaryRegion.range.end);
+      } else if (commonPrefixLen > 0) {
+        text = text.slice(commonPrefixLen);
+        range = new vscode.Range(position, primaryRegion.range.end);
+      } else {
+        return undefined;
       }
-
-      const offset = document.offsetAt(position);
-      const prefix = document.getText().slice(0, offset);
-      const suffix = document.getText().slice(offset);
-      if (!prefix.trim() && !suffix.trim()) {
-        resolve(undefined);
-        return;
-      }
-
-      const manager = this.ensureEditPredictionManager();
-      const suggestion = await manager.getSuggestion(document, position, token);
-
-      if (!suggestion || suggestion.regions.length === 0) {
-        resolve(undefined);
-        return;
-      }
-
-      const primaryRegion = suggestion.regions[0];
-      const cursorOffset = document.offsetAt(position);
-      const rangeStart = document.offsetAt(primaryRegion.range.start);
-      const rangeEnd = document.offsetAt(primaryRegion.range.end);
-
-      let text = primaryRegion.replacement;
-      let range = primaryRegion.range;
-
-      if (cursorOffset > rangeStart && cursorOffset <= rangeEnd) {
-        const existingBeforeCursor = document.getText().slice(rangeStart, cursorOffset);
-        const commonPrefixLen = this.findCommonPrefixLength(text, existingBeforeCursor);
-
-        if (commonPrefixLen >= existingBeforeCursor.length * 0.5) {
-          text = text.slice(commonPrefixLen);
-          range = new vscode.Range(position, primaryRegion.range.end);
-        } else if (commonPrefixLen > 0) {
-          text = text.slice(commonPrefixLen);
-          range = new vscode.Range(position, primaryRegion.range.end);
-        } else {
-          resolve(undefined);
-          return;
-        }
-      }
-
-      if (!text.trim()) {
-        resolve(undefined);
-        return;
-      }
-
-      const item = new vscode.InlineCompletionItem(text, range);
-      this._onDidGetSuggestion.fire();
-      resolve([item]);
-    };
-
-    if (immediate) {
-      return new Promise(resolve => { run(resolve); });
     }
 
-    return new Promise(resolve => {
-      this.resolvePendingEditPrediction = resolve;
-      this.editPredDebounceTimer = setTimeout(() => {
-        this.editPredDebounceTimer = null;
-        const r = this.resolvePendingEditPrediction;
-        this.resolvePendingEditPrediction = null;
-        run(r!);
-      }, this.config.debounceMs);
-    });
+    if (!text.trim()) return undefined;
+
+    const item = new vscode.InlineCompletionItem(text, range);
+    this._onDidGetSuggestion.fire();
+    return [item];
   }
 
   private findCommonPrefixLength(a: string, b: string): number {

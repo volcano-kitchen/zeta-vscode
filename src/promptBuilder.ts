@@ -51,15 +51,14 @@ export function buildFimPrompt(req: FimRequest): string {
   const suffix = req.suffix.trimEnd();
   const prefix = req.prefix.trimStart();
 
-  let header = '';
+  // LSP context as comment only (experimental)
+  let lspHeader = '';
   if (req.lspContext) {
-    header = `/* LSP context:\n${req.lspContext}\n*/\n`;
-  }
-  if (req.filePath) {
-    header += `${FILE_MARKER}${req.filePath}\n`;
+    lspHeader = `/* LSP context:\n${req.lspContext}\n*/\n`;
   }
 
-  return `${header}${FIM_SUFFIX}\n${suffix}\n${FIM_PREFIX}\n${prefix}\n${FIM_MIDDLE}`;
+  // Seed-Coder SPM format: suffix first, then prefix, then model fills middle
+  return `${lspHeader}${FIM_SUFFIX}\n${suffix}\n${FIM_PREFIX}\n${prefix}\n${FIM_MIDDLE}`;
 }
 
 export function getFimStopTokens(): string[] {
@@ -221,14 +220,55 @@ export function getEditPredictionStopTokens(): string[] {
   return [ENDOF_TEXT, V0318_END_MARKER, FIM_MIDDLE];
 }
 
+const FIM_CONTROL_TOKENS = [
+  FIM_SUFFIX,
+  FIM_PREFIX,
+  FIM_MIDDLE,
+  V0318_END_MARKER,
+  FILE_MARKER,
+  ENDOF_TEXT,
+];
+
 export function sanitizeCompletion(text: string): string {
-  return text
+  let result = text;
+
+  // If the model echoed back FIM control tokens, strip everything up to
+  // and including the last one, so only actual generated content remains.
+  const lastControlIdx = findLastControlToken(result);
+  if (lastControlIdx >= 0) {
+    result = result.slice(lastControlIdx);
+  }
+
+  result = result
     .replace(/<\|marker_\d+\|>/g, '')
     .replace(/<\|user_cursor\|>/g, '')
     .replace(/<\[end▁of▁sentence\]>/g, '')
+    .replace(/<filename>/g, '')
+    .replace(/<\[fim-suffix\]>/g, '')
+    .replace(/<\[fim-prefix\]>/g, '')
+    .replace(/<\[fim-middle\]>/g, '')
+    .replace(/<\|fim_pad\|>/g, '')
+    .replace(/<\|file_separator\|>/g, '')
+    .replace(/<\|endoftext\|>/g, '')
     .replace(/NO_EDITS\s*/g, '')
     .replace(/<<<<<<< CURRENT\s*/g, '')
     .replace(/=======\s*/g, '')
     .replace(/>>>>>>> UPDATED\s*/g, '')
     .trim();
+
+  return result;
+}
+
+/** Find the start offset after the LAST FIM control token in the output.
+ *  Returns -1 if none found, otherwise the byte offset right after the token. */
+function findLastControlToken(text: string): number {
+  let lastPos = -1;
+  for (const token of FIM_CONTROL_TOKENS) {
+    const idx = text.lastIndexOf(token);
+    if (idx >= 0) {
+      const after = idx + token.length;
+      if (after > lastPos) lastPos = after;
+    }
+  }
+  return lastPos;
 }
