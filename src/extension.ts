@@ -121,25 +121,31 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('zeta.acceptAndAdvance', async () => {
-      if (!editPredManager || !editPredManager.hasMoreRegions()) {
-        await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
-        editPredManager?.recordAccept();
-        editPredManager?.clearSuggestion();
-        return;
-      }
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || !editPredManager) return;
+
+      const suggestion = editPredManager.getCurrentSuggestion();
+      if (!suggestion) return;
 
       await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
       editPredManager.recordAccept();
 
+      if (!editPredManager.hasMoreRegions()) {
+        editPredManager.clearSuggestion();
+        return;
+      }
+
+      // Small delay to let the edit apply before moving cursor
+      await new Promise(r => setTimeout(r, 30));
+
       const nextRegion = editPredManager.advanceToNextRegion();
       if (nextRegion) {
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-          const newPos = new vscode.Position(nextRegion.line, 0);
-          editor.selection = new vscode.Selection(newPos, newPos);
-          editor.revealRange(new vscode.Range(newPos, newPos), vscode.TextEditorRevealType.Default);
-          await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
-        }
+        const newPos = new vscode.Position(nextRegion.line, 0);
+        editor.selection = new vscode.Selection(newPos, newPos);
+        editor.revealRange(new vscode.Range(newPos, newPos), vscode.TextEditorRevealType.Default);
+        
+        // Trigger next prediction after cursor moved
+        await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
       }
     })
   );

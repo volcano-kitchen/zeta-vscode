@@ -123,18 +123,33 @@ export class ZetaInlineCompletionProvider
       let text = primaryRegion.replacement;
       let range = primaryRegion.range;
 
-      // If cursor is inside the region range, trim the already-typed prefix
-      // so ghost text only shows what comes after the cursor
       if (cursorOffset > rangeStart && cursorOffset <= rangeEnd) {
         const existingBeforeCursor = document.getText().slice(rangeStart, cursorOffset);
-        if (text.startsWith(existingBeforeCursor)) {
-          text = text.slice(existingBeforeCursor.length);
+        const commonPrefixLen = this.findCommonPrefixLength(text, existingBeforeCursor);
+
+        if (commonPrefixLen >= existingBeforeCursor.length * 0.5) {
+          // Model output shares significant prefix with what user has typed
+          // Show only the predicted suffix
+          text = text.slice(commonPrefixLen);
           range = new vscode.Range(position, primaryRegion.range.end);
+        } else if (commonPrefixLen > 0) {
+          // Partial match - still trim the common part
+          text = text.slice(commonPrefixLen);
+          range = new vscode.Range(position, primaryRegion.range.end);
+        } else {
+          // Full rewrite: model output doesn't match what user typed.
+          // Don't show ghost text - it would be confusing (duplicates/rewrites before cursor)
+          resolve(undefined);
+          return;
         }
       }
 
-      const item = new vscode.InlineCompletionItem(text, range);
+      if (!text.trim()) {
+        resolve(undefined);
+        return;
+      }
 
+      const item = new vscode.InlineCompletionItem(text, range);
       this._onDidGetSuggestion.fire();
       resolve([item]);
     };
@@ -152,6 +167,15 @@ export class ZetaInlineCompletionProvider
         run(r!);
       }, this.config.debounceMs);
     });
+  }
+
+  private findCommonPrefixLength(a: string, b: string): number {
+    const maxLen = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < maxLen && a[i] === b[i]) {
+      i++;
+    }
+    return i;
   }
 
   private async handleAutomatic(
@@ -258,8 +282,18 @@ export class ZetaInlineCompletionProvider
       const cleaned = sanitizeCompletion(completion);
       if (!cleaned) return undefined;
 
+      // FIM should only return completion after cursor, but guard against
+      // models that echo the prefix
+      let text = cleaned;
+      const prefix = req.prefix;
+      const commonLen = this.findCommonPrefixLength(text, prefix);
+      if (commonLen > 0) {
+        text = text.slice(commonLen);
+      }
+      if (!text.trim()) return undefined;
+
       const item = new vscode.InlineCompletionItem(
-        cleaned,
+        text,
         new vscode.Range(position, position)
       );
 
