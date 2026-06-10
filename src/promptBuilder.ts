@@ -63,7 +63,7 @@ export function buildFimPrompt(req: FimRequest): string {
 }
 
 export function getFimStopTokens(): string[] {
-  return [ENDOF_TEXT, FIM_MIDDLE, V0318_END_MARKER, '\n\n'];
+  return [ENDOF_TEXT, FIM_MIDDLE, V0318_END_MARKER];
 }
 
 export function splitIntoBlocks(text: string, minLines: number, maxLines: number): number[] {

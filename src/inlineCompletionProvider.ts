@@ -1,17 +1,20 @@
 import * as vscode from 'vscode';
 import { InferenceClient } from './inferenceClient';
-import { buildFimPrompt, getFimStopTokens, sanitizeCompletion, FimRequest, buildEditPredictionPrompt, parseEditPredictionResponse, getEditPredictionStopTokens } from './promptBuilder';
+import { buildFimPrompt, getFimStopTokens, sanitizeCompletion, FimRequest } from './promptBuilder';
 import { getLspContext } from './lspContext';
 import { ZetaConfig, loadConfig } from './config';
 import { EditPredictionManager } from './editPredictionManager';
 import { EditHistoryTracker } from './editHistory';
+
+const FIM_DEDUP_WINDOW = 80;
 
 export class ZetaInlineCompletionProvider
   implements vscode.InlineCompletionItemProvider
 {
   private client: InferenceClient;
   private config: ZetaConfig;
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private fimDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private editPredDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingRequest: AbortController | null = null;
   private editPredictionManager: EditPredictionManager | null = null;
   private editHistory: EditHistoryTracker | null = null;
@@ -65,10 +68,13 @@ export class ZetaInlineCompletionProvider
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
     if (!this.config.enabled) return undefined;
 
+    const isExplicit = context.triggerKind === vscode.InlineCompletionTriggerKind.Invoke;
+
     if (this.config.enableEditPrediction && this.editHistory) {
-      const immediate = context.triggerKind === vscode.InlineCompletionTriggerKind.Invoke;
-      const editResult = await this.handleEditPrediction(document, position, token, immediate);
+      const editResult = await this.handleEditPrediction(document, position, token, isExplicit);
       if (editResult) return editResult;
+      // On explicit triggers only, fall through to FIM if edit prediction fails
+      if (!isExplicit) return undefined;
     }
 
     if (context.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) {
@@ -88,9 +94,9 @@ export class ZetaInlineCompletionProvider
       this.resolvePendingEditPrediction(undefined);
       this.resolvePendingEditPrediction = null;
     }
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    if (this.editPredDebounceTimer) {
+      clearTimeout(this.editPredDebounceTimer);
+      this.editPredDebounceTimer = null;
     }
 
     const run = async (resolve: (value: vscode.InlineCompletionItem[] | undefined) => void) => {
@@ -128,17 +134,12 @@ export class ZetaInlineCompletionProvider
         const commonPrefixLen = this.findCommonPrefixLength(text, existingBeforeCursor);
 
         if (commonPrefixLen >= existingBeforeCursor.length * 0.5) {
-          // Model output shares significant prefix with what user has typed
-          // Show only the predicted suffix
           text = text.slice(commonPrefixLen);
           range = new vscode.Range(position, primaryRegion.range.end);
         } else if (commonPrefixLen > 0) {
-          // Partial match - still trim the common part
           text = text.slice(commonPrefixLen);
           range = new vscode.Range(position, primaryRegion.range.end);
         } else {
-          // Full rewrite: model output doesn't match what user typed.
-          // Don't show ghost text - it would be confusing (duplicates/rewrites before cursor)
           resolve(undefined);
           return;
         }
@@ -160,8 +161,8 @@ export class ZetaInlineCompletionProvider
 
     return new Promise(resolve => {
       this.resolvePendingEditPrediction = resolve;
-      this.debounceTimer = setTimeout(() => {
-        this.debounceTimer = null;
+      this.editPredDebounceTimer = setTimeout(() => {
+        this.editPredDebounceTimer = null;
         const r = this.resolvePendingEditPrediction;
         this.resolvePendingEditPrediction = null;
         run(r!);
@@ -187,12 +188,11 @@ export class ZetaInlineCompletionProvider
       this.resolvePendingFim(undefined);
       this.resolvePendingFim = null;
     }
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    if (this.fimDebounceTimer) {
+      clearTimeout(this.fimDebounceTimer);
+      this.fimDebounceTimer = null;
     }
 
-    // snapshot prefix/suffix at call time, before debounce
     const offset = document.offsetAt(position);
     const prefix = document.getText().slice(0, offset);
     const suffix = document.getText().slice(offset);
@@ -204,8 +204,8 @@ export class ZetaInlineCompletionProvider
     return new Promise(resolve => {
       this.resolvePendingFim = resolve;
 
-      this.debounceTimer = setTimeout(async () => {
-        this.debounceTimer = null;
+      this.fimDebounceTimer = setTimeout(async () => {
+        this.fimDebounceTimer = null;
         const r = this.resolvePendingFim;
         this.resolvePendingFim = null;
 
@@ -282,11 +282,10 @@ export class ZetaInlineCompletionProvider
       const cleaned = sanitizeCompletion(completion);
       if (!cleaned) return undefined;
 
-      // FIM should only return completion after cursor, but guard against
-      // models that echo the prefix
+      // Strip any characters the model echoes from right before cursor
       let text = cleaned;
-      const prefix = req.prefix;
-      const commonLen = this.findCommonPrefixLength(text, prefix);
+      const tailPrefix = req.prefix.slice(-FIM_DEDUP_WINDOW);
+      const commonLen = this.findCommonPrefixLength(text, tailPrefix);
       if (commonLen > 0) {
         text = text.slice(commonLen);
       }
