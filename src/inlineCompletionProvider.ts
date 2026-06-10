@@ -205,6 +205,13 @@ export class ZetaInlineCompletionProvider
 
     if (token.isCancellationRequested) return undefined;
 
+    // Zeta 2.1 SPM FIM works best at line boundaries.
+    // Skip if cursor is in the middle of a line (non-whitespace after cursor).
+    const restOfLine = document.lineAt(position.line).text.slice(position.character);
+    if (restOfLine.trim().length > 0) {
+      return undefined;
+    }
+
     if (this.config.experimentalInjectLsp) {
       try {
         const lspInfo = await getLspContext(document, position);
@@ -237,12 +244,18 @@ export class ZetaInlineCompletionProvider
       const cleaned = sanitizeCompletion(completion);
       if (!cleaned) return undefined;
 
-      // Strip any characters the model echoes from right before cursor
+      // Strip any characters the model echoes from right before cursor or from suffix
       let text = cleaned;
       const tailPrefix = req.prefix.slice(-FIM_DEDUP_WINDOW);
-      const commonLen = this.findCommonPrefixLength(text, tailPrefix);
-      if (commonLen > 0) {
-        text = text.slice(commonLen);
+      const prefixCommonLen = this.findCommonPrefixLength(text, tailPrefix);
+      if (prefixCommonLen > 0) {
+        text = text.slice(prefixCommonLen);
+      }
+      // Also trim if the model regenerated the start of the suffix
+      const headSuffix = req.suffix.slice(0, FIM_DEDUP_WINDOW).trimStart();
+      const suffixCommonLen = this.findCommonPrefixLength(text, headSuffix);
+      if (suffixCommonLen > 0) {
+        text = text.slice(suffixCommonLen);
       }
       if (!text.trim()) return undefined;
 

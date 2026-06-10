@@ -35,9 +35,9 @@ export interface ParsedEditResponse {
 }
 
 const ENDOF_TEXT = '<|endoftext|>';
-const FIM_SUFFIX = '<[fim-suffix]>';
-const FIM_PREFIX = '<[fim-prefix]>';
-const FIM_MIDDLE = '<[fim-middle]>';
+const FIM_SUFFIX = '<|fim_suffix|>';
+const FIM_PREFIX = '<|fim_prefix|>';
+const FIM_MIDDLE = '<|fim_middle|>';
 const FILE_MARKER = '<filename>';
 const CURSOR_MARKER = '<|user_cursor|>';
 const V0318_END_MARKER = '<[end▁of▁sentence]>';
@@ -62,7 +62,7 @@ export function buildFimPrompt(req: FimRequest): string {
 }
 
 export function getFimStopTokens(): string[] {
-  return [ENDOF_TEXT, FIM_MIDDLE, V0318_END_MARKER];
+  return [ENDOF_TEXT, FIM_MIDDLE, FIM_SUFFIX, FIM_PREFIX, V0318_END_MARKER];
 }
 
 export function splitIntoBlocks(text: string, minLines: number, maxLines: number): number[] {
@@ -220,25 +220,18 @@ export function getEditPredictionStopTokens(): string[] {
   return [ENDOF_TEXT, V0318_END_MARKER, FIM_MIDDLE];
 }
 
-const FIM_CONTROL_TOKENS = [
-  FIM_SUFFIX,
-  FIM_PREFIX,
-  FIM_MIDDLE,
-  V0318_END_MARKER,
-  FILE_MARKER,
-  ENDOF_TEXT,
-];
-
 export function sanitizeCompletion(text: string): string {
   let result = text;
 
-  // If the model echoed back FIM control tokens, strip everything up to
-  // and including the last one, so only actual generated content remains.
-  const lastControlIdx = findLastControlToken(result);
-  if (lastControlIdx >= 0) {
-    result = result.slice(lastControlIdx);
+  // If the model echoed back FIM control tokens (prompt regurgitation),
+  // strip everything up to and including <|fim_middle|> — the real
+  // generated content starts after that token.
+  const middleIdx = result.lastIndexOf(FIM_MIDDLE);
+  if (middleIdx >= 0) {
+    result = result.slice(middleIdx + FIM_MIDDLE.length);
   }
 
+  // Strip all control / special tokens that may leak into output
   result = result
     .replace(/<\|marker_\d+\|>/g, '')
     .replace(/<\|user_cursor\|>/g, '')
@@ -247,6 +240,9 @@ export function sanitizeCompletion(text: string): string {
     .replace(/<\[fim-suffix\]>/g, '')
     .replace(/<\[fim-prefix\]>/g, '')
     .replace(/<\[fim-middle\]>/g, '')
+    .replace(/<\|fim_suffix\|>/g, '')
+    .replace(/<\|fim_prefix\|>/g, '')
+    .replace(/<\|fim_middle\|>/g, '')
     .replace(/<\|fim_pad\|>/g, '')
     .replace(/<\|file_separator\|>/g, '')
     .replace(/<\|endoftext\|>/g, '')
@@ -257,18 +253,4 @@ export function sanitizeCompletion(text: string): string {
     .trim();
 
   return result;
-}
-
-/** Find the start offset after the LAST FIM control token in the output.
- *  Returns -1 if none found, otherwise the byte offset right after the token. */
-function findLastControlToken(text: string): number {
-  let lastPos = -1;
-  for (const token of FIM_CONTROL_TOKENS) {
-    const idx = text.lastIndexOf(token);
-    if (idx >= 0) {
-      const after = idx + token.length;
-      if (after > lastPos) lastPos = after;
-    }
-  }
-  return lastPos;
 }
