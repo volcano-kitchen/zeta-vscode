@@ -253,9 +253,10 @@ export class ZetaInlineCompletionProvider
       }
       // Also trim if the model regenerated the start of the suffix
       const headSuffix = req.suffix.slice(0, FIM_DEDUP_WINDOW).trimStart();
-      const suffixCommonLen = this.findCommonPrefixLength(text, headSuffix);
-      if (suffixCommonLen > 0) {
-        text = text.slice(suffixCommonLen);
+      const textTrimmed = text.trimStart();
+      if (textTrimmed.startsWith(headSuffix) && headSuffix.length > 0) {
+        const leadingWs = text.length - textTrimmed.length;
+        text = text.slice(leadingWs + headSuffix.length);
       }
       if (!text.trim()) return undefined;
 

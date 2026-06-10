@@ -122,12 +122,16 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('zeta.acceptAndAdvance', async () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor || !editPredManager) return;
+      if (!editor) return;
 
+      // Always commit the current inline completion first
+      await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
+
+      // Only advance to next edit prediction region if one is active
+      if (!editPredManager) return;
       const suggestion = editPredManager.getCurrentSuggestion();
       if (!suggestion) return;
 
-      await vscode.commands.executeCommand('editor.action.inlineSuggest.commit');
       editPredManager.recordAccept();
 
       if (!editPredManager.hasMoreRegions()) {
